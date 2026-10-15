@@ -36,6 +36,9 @@ jobs:
       run:
         working-directory: infra/terraform/environments/dev
     steps:
+      - name: Checkou repository
+        uses: actions/checkout@v4
+    
       - name: Verify required non-secret configuration
         shell: bash
         run: |
@@ -44,7 +47,7 @@ jobs:
           if [[ "$TF_VAR_cluster_public_access_cidrs" == *'0.0.0.0/0'* ]]; then
             echo 'EKS API CIDR cannot be 0.0.0.0/0 in the deployment workflow'; exit 1
           fi
-      - uses: actions/checkout@v4
+      
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"

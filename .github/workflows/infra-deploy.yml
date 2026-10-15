@@ -1,0 +1,111 @@
+name: Infra CD - PPS Dev Plan / Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "plan = preview only; apply = plan then wait for environment approval"
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-pps-dev-state
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VAR_frontend_bucket_name: ${{ vars.PPS_DEV_FRONTEND_BUCKET_NAME }}
+  TF_VAR_cluster_public_access_cidrs: ${{ vars.PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS }}
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    name: PPS Dev Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/dev
+    steps:
+      - name: Verify required non-secret configuration
+        shell: bash
+        run: |
+          test -n "$TF_VAR_frontend_bucket_name" || { echo "Missing PPS_DEV_FRONTEND_BUCKET_NAME"; exit 1; }
+          test -n "$TF_VAR_cluster_public_access_cidrs" || { echo "Missing PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS"; exit 1; }
+          if [[ "$TF_VAR_cluster_public_access_cidrs" == *'0.0.0.0/0'* ]]; then
+            echo 'EKS API CIDR cannot be 0.0.0.0/0 in the deployment workflow'; exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - name: Configure AWS with existing OIDC Plan role
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::513329232596:role/GitHubActions-Terraform-Plan-Role
+          aws-region: ap-northeast-2
+      - name: Check AWS account
+        shell: bash
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          test "$ACCOUNT" = '513329232596' || { echo 'Wrong AWS account'; exit 1; }
+      - name: Terraform init
+        run: terraform init -input=false
+      - name: Terraform fmt & validate
+        run: terraform fmt -check -recursive && terraform validate -no-color
+      - name: Terraform plan
+        run: terraform plan -input=false -out=tfplan
+      - name: Plan summary
+        run: terraform show -no-color tfplan
+      - name: Upload saved plan artifact
+        if: inputs.operation == 'apply'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pps-dev-tfplan
+          path: infra/terraform/environments/dev/tfplan
+          if-no-files-found: error
+          retention-days: 1
+
+  apply:
+    # Both gates are required: explicit manual 'apply' + repo variable true.
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'apply' && vars.PPS_APPLY_ENABLED == 'true'
+    needs: plan
+    name: PPS Dev Approved Apply
+    runs-on: ubuntu-latest
+    environment: pps-dev
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - name: Configure AWS with existing OIDC Apply role
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::513329232596:role/githubactions-terraformrole
+          aws-region: ap-northeast-2
+      - name: Check AWS account
+        shell: bash
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          test "$ACCOUNT" = '513329232596' || { echo 'Wrong AWS account'; exit 1; }
+      - name: Terraform init
+        run: terraform init -input=false
+      - name: Download approved plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pps-dev-tfplan
+          path: infra/terraform/environments/dev
+      - name: Apply exact saved plan
+        run: terraform apply -input=false tfplan

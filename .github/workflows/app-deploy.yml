@@ -1,0 +1,55 @@
+name: App CD - FastAPI to EKS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pps-dev-app-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && vars.PPS_APP_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: pps-dev
+    env:
+      AWS_REGION: ap-northeast-2
+      AWS_ACCOUNT_ID: "513329232596"
+      EKS_CLUSTER_NAME: pps-dev-eks
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::513329232596:role/githubactions-terraformrole
+          aws-region: ap-northeast-2
+      - name: Configure ECR and push immutable images
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$AWS_ACCOUNT_ID"
+          REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+          TAG="${GITHUB_SHA:0:12}"
+          for SERVICE in organization notice; do
+            IMAGE="$REGISTRY/pps-dev-$SERVICE:$TAG"
+            docker build -t "$IMAGE" "apps/services/$SERVICE"
+            docker push "$IMAGE"
+            if [[ "$SERVICE" == 'organization' ]]; then echo "ORG_IMAGE=$IMAGE" >> "$GITHUB_ENV"; fi
+            if [[ "$SERVICE" == 'notice' ]]; then echo "NOTICE_IMAGE=$IMAGE" >> "$GITHUB_ENV"; fi
+          done
+      - name: Configure kubectl for EKS
+        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+      - name: Deploy services
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl apply -f infra/kubernetes/namespace.yaml
+          sed "s|__IMAGE__|${ORG_IMAGE}|g" infra/kubernetes/organization.yaml | kubectl apply -f -
+          sed "s|__IMAGE__|${NOTICE_IMAGE}|g" infra/kubernetes/notice.yaml | kubectl apply -f -
+          kubectl -n pps-dev rollout status deployment/organization --timeout=300s
+          kubectl -n pps-dev rollout status deployment/notice --timeout=300s

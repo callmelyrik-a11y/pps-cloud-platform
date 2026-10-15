@@ -1,0 +1,29 @@
+# Terraform State / local provider data / saved plans
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/tfplan
+**/terraform.tfvars
+**/*.auto.tfvars
+!**/terraform.tfvars.example
+crash.log
+crash.*.log
+# Commit .terraform.lock.hcl after first successful init.
+
+# Local credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python / JavaScript
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+node_modules/
+dist/
+coverage/
+.DS_Store

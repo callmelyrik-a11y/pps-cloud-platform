@@ -1,0 +1,39 @@
+name: Infra CI - Terraform validate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/infra-ci.yml"
+      - ".github/workflows/infra-deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/infra-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - name: Format check
+        run: terraform fmt -check -recursive
+      - name: Initialize without AWS state access
+        run: terraform init -backend=false -input=false
+      - name: Validate Terraform configuration
+        run: terraform validate -no-color

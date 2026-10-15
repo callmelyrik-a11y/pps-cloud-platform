@@ -1,0 +1,31 @@
+# DO NOT DEPLOY AS-IS on a public internet-facing ALB.
+# Before deploying, configure TLS ACM ARN, HTTPS listener and access/WAF rules.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pps-api
+  namespace: pps-dev
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:ACCOUNT_ID:certificate/UUID
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /api/organizations
+            pathType: Prefix
+            backend:
+              service:
+                name: organization
+                port:
+                  number: 80
+          - path: /api/notices
+            pathType: Prefix
+            backend:
+              service:
+                name: notice
+                port:
+                  number: 80

@@ -1,0 +1,56 @@
+name: App CI - FastAPI and React
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - ".github/workflows/app-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fastapi-tests:
+    name: FastAPI tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [organization, notice]
+    defaults:
+      run:
+        working-directory: apps/services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Build container locally
+        working-directory: .
+        run: docker build -t pps-${{ matrix.service }}:ci apps/services/${{ matrix.service }}
+
+  react-build:
+    name: React build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build frontend
+        run: npm run build

@@ -1,0 +1,51 @@
+name: Frontend CD - React to S3 / CloudFront
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pps-dev-frontend-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && vars.PPS_FRONTEND_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: pps-dev
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build frontend
+        run: npm install --no-audit --no-fund && npm run build
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::513329232596:role/githubactions-terraformrole
+          aws-region: ap-northeast-2
+      - name: Upload static files
+        shell: bash
+        env:
+          BUCKET: ${{ vars.PPS_DEV_FRONTEND_BUCKET_NAME }}
+        run: |
+          test -n "$BUCKET" || { echo 'PPS_DEV_FRONTEND_BUCKET_NAME missing'; exit 1; }
+          test "$(aws sts get-caller-identity --query Account --output text)" = '513329232596'
+          aws s3 sync dist/ "s3://$BUCKET/" --delete
+      - name: Invalidate CloudFront if configured
+        shell: bash
+        env:
+          DIST_ID: ${{ vars.PPS_DEV_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          if [[ -n "$DIST_ID" ]]; then
+            aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths '/*'
+          else
+            echo 'CloudFront distribution ID not configured; skip invalidation.'
+          fi

@@ -1,17 +1,22 @@
-
 name: Infra CD - PPS Dev Plan / Apply
 
 on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "plan = preview only; apply = plan then wait for environment approval"
+        description: "Choose Terraform operation"
         required: true
         type: choice
         options:
           - plan
           - apply
         default: plan
+
+      dry_run:
+        description: "Test Apply job without creating AWS resources"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -25,46 +30,33 @@ env:
   AWS_REGION: ap-northeast-2
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
+
   TF_VAR_frontend_bucket_name: ${{ vars.PPS_DEV_FRONTEND_BUCKET_NAME }}
   TF_VAR_cluster_public_access_cidrs: ${{ vars.PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS }}
 
 jobs:
+
+  # ============================================================
+  # JOB 1: Terraform Plan
+  # ============================================================
+
   plan:
-    name: PPS Dev Plan
+    name: PPS Dev Terraform Plan
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     defaults:
       run:
-        working-directory: infra/terraform/environments/dev
         shell: bash
+        working-directory: infra/terraform/environments/dev
 
     steps:
-      # 1. Checkout must happen before running commands in Terraform directory
+
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Inspect GitHub OIDC claims
-        working-directory: ${{ github.workspace }}
-        shell: bash
-        run: |
-          TOKEN_JSON=$(curl -fsS \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com")
 
-          TOKEN=$(echo "$TOKEN_JSON" | jq -r '.value')
-
-          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2)
-
-          PAYLOAD=$(echo "$PAYLOAD" | tr '_-' '/+')
-
-          case $((${#PAYLOAD} % 4)) in
-            2) PAYLOAD="${PAYLOAD}==" ;;
-            3) PAYLOAD="${PAYLOAD}=" ;;
-          esac
-      
-          echo "$PAYLOAD" | base64 -d | jq '{sub, aud, repository, ref, environment}'
-
-      # 2. Inspect actual repository paths
+      # 2. Check repository paths
       - name: Check repository paths
         working-directory: ${{ github.workspace }}
         run: |
@@ -75,87 +67,73 @@ jobs:
           git branch --show-current
           git rev-parse HEAD
 
-          echo "===== Repository root ====="
-          ls -la
-
-          echo "===== Tracked Terraform files ====="
+          echo "===== Terraform files ====="
           git ls-files '*.tf'
 
-          echo "===== Expected Terraform directory ====="
-          if [ -d "infra/terraform/environments/dev" ]; then
-            echo "Terraform directory exists"
-            ls -la infra/terraform/environments/dev
-          else
+          echo "===== Terraform directory ====="
+
+          if [ ! -d "infra/terraform/environments/dev" ]; then
             echo "::error::Terraform directory does not exist"
-            echo "===== Available directories ====="
             find . -maxdepth 6 -type d | sort
             exit 1
           fi
 
-      # 3. Validate GitHub Variables
-      - name: Verify required non-secret configuration
+          ls -la infra/terraform/environments/dev
+
+          echo "Terraform directory verified"
+
+      # 3. Validate required configuration
+      - name: Verify required configuration
         working-directory: ${{ github.workspace }}
+        env:
+          PLAN_ROLE_ARN: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
         run: |
-          test -n "$TF_VAR_frontend_bucket_name" || {
+          if [ -z "$TF_VAR_frontend_bucket_name" ]; then
             echo "::error::Missing PPS_DEV_FRONTEND_BUCKET_NAME"
             exit 1
-          }
+          fi
 
-          test -n "$TF_VAR_cluster_public_access_cidrs" || {
+          if [ -z "$TF_VAR_cluster_public_access_cidrs" ]; then
             echo "::error::Missing PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS"
             exit 1
-          }
+          fi
 
-          test -n "${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}" || {
+          if [ -z "$PLAN_ROLE_ARN" ]; then
             echo "::error::Missing AWS_TERRAFORM_PLAN_ROLE_ARN"
             exit 1
-          }
+          fi
 
           if [[ "$TF_VAR_cluster_public_access_cidrs" == *'0.0.0.0/0'* ]]; then
             echo "::error::EKS API CIDR cannot contain 0.0.0.0/0"
             exit 1
           fi
 
-          echo "Required configuration is present"
+          echo "Required configuration verified"
 
-      # 4. Install Terraform
+      # 4. Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
-      - name: Debug GitHub OIDC subject
-        working-directory: ${{ github.workspace }}
-        shell: bash
-        run: |
-          RESPONSE=$(curl -fsS \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
-      
-          TOKEN=$(echo "$RESPONSE" | jq -r '.value')
-          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
-      
-          case $((${#PAYLOAD} % 4)) in
-            2) PAYLOAD="${PAYLOAD}==" ;;
-            3) PAYLOAD="${PAYLOAD}=" ;;
-          esac
-      
-          echo "$PAYLOAD" | base64 -d | jq '{sub, aud, repository, ref, environment}'
-      
 
-      # 5. Assume AWS Plan Role using GitHub OIDC
+      # 5. Configure AWS credentials using Plan Role
       - name: Configure AWS credentials - Plan
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-PPS-Plan
+          retry-max-attempts: 3
 
-      # 6. Verify AWS identity and account
+      # 6. Verify AWS account
       - name: Verify AWS identity
         run: |
+          echo "===== AWS Identity ====="
           aws sts get-caller-identity
 
-          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ACCOUNT=$(aws sts get-caller-identity \
+            --query Account \
+            --output text)
 
           if [ "$ACCOUNT" != "513329232596" ]; then
             echo "::error::Wrong AWS account: $ACCOUNT"
@@ -164,19 +142,19 @@ jobs:
 
           echo "AWS account verified: $ACCOUNT"
 
-      # 7. Initialize Terraform backend
+      # 7. Terraform init
       - name: Terraform init
         run: terraform init -input=false -no-color
 
-      # 8. Check Terraform formatting
+      # 8. Terraform format check
       - name: Terraform fmt
         run: terraform fmt -check -recursive
 
-      # 9. Validate Terraform configuration
+      # 9. Terraform validate
       - name: Terraform validate
         run: terraform validate -no-color
 
-      # 10. Generate execution plan
+      # 10. Terraform plan
       - name: Terraform plan
         run: |
           terraform plan \
@@ -184,13 +162,13 @@ jobs:
             -no-color \
             -out=tfplan
 
-      # 11. Display plan
+      # 11. Display plan summary
       - name: Terraform plan summary
         run: terraform show -no-color tfplan
 
-      # 12. Upload saved plan only for apply operation
+      # 12. Upload plan for Apply job
       - name: Upload saved plan artifact
-        if: inputs.operation == 'apply' && vars.PPS_APPLY_ENABLED == 'true'
+        if: inputs.operation == 'apply'
         uses: actions/upload-artifact@v4
         with:
           name: pps-dev-tfplan
@@ -198,15 +176,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # ============================================================
+  # JOB 2: Terraform Apply / Dry Run
+  # ============================================================
+
   apply:
-    name: PPS Dev Approved Apply
+    name: PPS Dev Terraform Apply
+
+    needs: plan
 
     if: >-
       github.ref == 'refs/heads/main' &&
-      inputs.operation == 'apply' &&
-      vars.PPS_APPLY_ENABLED == 'true'
+      inputs.operation == 'apply'
 
-    needs: plan
     runs-on: ubuntu-latest
 
     environment: pps-dev
@@ -217,15 +199,31 @@ jobs:
 
     defaults:
       run:
-        working-directory: infra/terraform/environments/dev
         shell: bash
+        working-directory: infra/terraform/environments/dev
 
     steps:
+
       # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Verify Terraform directory
+      # 2. Verify real Apply authorization
+      - name: Check Apply authorization
+        if: inputs.dry_run == false
+        working-directory: ${{ github.workspace }}
+        env:
+          APPLY_ENABLED: ${{ vars.PPS_APPLY_ENABLED }}
+        run: |
+          if [ "$APPLY_ENABLED" != "true" ]; then
+            echo "::error::Actual Apply is disabled"
+            echo "Set PPS_APPLY_ENABLED=true to deploy resources"
+            exit 1
+          fi
+
+          echo "Actual Apply is authorized"
+
+      # 3. Verify Terraform directory
       - name: Verify Terraform directory
         working-directory: ${{ github.workspace }}
         run: |
@@ -236,26 +234,51 @@ jobs:
 
           echo "Terraform directory verified"
 
-      # 3. Install Terraform
+      # 4. Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
 
-      # 4. Assume AWS Apply Role using GitHub OIDC
+      # 5. Inspect Apply OIDC claims
+      # Diagnostic step: remove after successful authentication
+      - name: Inspect Apply OIDC subject
+        working-directory: ${{ github.workspace }}
+        run: |
+          RESPONSE=$(curl -fsS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+
+          TOKEN=$(echo "$RESPONSE" | jq -r '.value')
+
+          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
+
+          case $((${#PAYLOAD} % 4)) in
+            2) PAYLOAD="${PAYLOAD}==" ;;
+            3) PAYLOAD="${PAYLOAD}=" ;;
+          esac
+
+          echo "$PAYLOAD" | base64 -d \
+            | jq '{sub, aud, repository, ref, environment}'
+
+      # 6. Configure AWS credentials using Apply Role
       - name: Configure AWS credentials - Apply
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-PPS-Apply
+          retry-max-attempts: 3
 
-      # 5. Verify AWS identity and account
+      # 7. Verify AWS identity
       - name: Verify AWS identity
         run: |
+          echo "===== AWS Identity ====="
           aws sts get-caller-identity
 
-          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ACCOUNT=$(aws sts get-caller-identity \
+            --query Account \
+            --output text)
 
           if [ "$ACCOUNT" != "513329232596" ]; then
             echo "::error::Wrong AWS account: $ACCOUNT"
@@ -264,27 +287,67 @@ jobs:
 
           echo "AWS account verified: $ACCOUNT"
 
-      # 6. Initialize Terraform backend
+      # 8. Terraform init
       - name: Terraform init
         run: terraform init -input=false -no-color
 
-      # 7. Download exact plan produced by Plan job
+      # 9. Download saved plan
       - name: Download approved plan artifact
         uses: actions/download-artifact@v4
         with:
           name: pps-dev-tfplan
           path: infra/terraform/environments/dev
 
-      # 8. Verify downloaded plan
+      # 10. Verify saved plan
       - name: Verify saved plan
         run: |
-          test -f tfplan || {
+          if [ ! -f tfplan ]; then
             echo "::error::Saved Terraform plan not found"
             exit 1
-          }
+          fi
 
           echo "Saved Terraform plan found"
 
-      # 9. Apply saved plan
+      # ========================================================
+      # DRY RUN: Verify Apply workflow without creating resources
+      # ========================================================
+
+      - name: Dry-run Apply verification
+        if: inputs.dry_run == true
+        run: |
+          echo "=================================="
+          echo "       TERRAFORM DRY RUN"
+          echo "=================================="
+
+          echo "Apply job started successfully"
+          echo "AWS OIDC authentication succeeded"
+          echo "AWS account verified"
+          echo "Terraform backend initialized"
+          echo "Saved Terraform plan downloaded"
+
+          terraform show -no-color tfplan > /dev/null
+
+          echo "Saved Terraform plan verified"
+
+          echo "=================================="
+          echo "No terraform apply command executed"
+          echo "No AWS infrastructure deployment"
+          echo "=================================="
+
+      # ========================================================
+      # REAL APPLY: Deploy AWS resources
+      # ========================================================
+
       - name: Apply exact saved plan
-        run: terraform apply -input=false -no-color tfplan
+        if: >-
+          inputs.dry_run == false &&
+          vars.PPS_APPLY_ENABLED == 'true'
+        run: |
+          echo "===== Terraform Apply ====="
+
+          terraform apply \
+            -input=false \
+            -no-color \
+            tfplan
+
+          echo "Terraform Apply completed"

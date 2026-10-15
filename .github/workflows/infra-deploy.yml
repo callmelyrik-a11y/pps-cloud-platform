@@ -123,6 +123,24 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
+      - name: Debug GitHub OIDC subject
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          RESPONSE=$(curl -fsS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+      
+          TOKEN=$(echo "$RESPONSE" | jq -r '.value')
+          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
+      
+          case $((${#PAYLOAD} % 4)) in
+            2) PAYLOAD="${PAYLOAD}==" ;;
+            3) PAYLOAD="${PAYLOAD}=" ;;
+          esac
+      
+          echo "$PAYLOAD" | base64 -d | jq '{sub, aud, repository, ref, environment}'
+      
 
       # 5. Assume AWS Plan Role using GitHub OIDC
       - name: Configure AWS credentials - Plan

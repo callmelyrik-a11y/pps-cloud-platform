@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ap-northeast-2
+  AWS_REGION: ${{ vars.AWS_REGION }}
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   TF_VAR_frontend_bucket_name: ${{ vars.PPS_DEV_FRONTEND_BUCKET_NAME }}
@@ -98,8 +98,8 @@ jobs:
       - name: Configure AWS with existing OIDC Apply role
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: arn:aws:iam::513329232596:role/githubactions-terraformrole
-          aws-region: ap-northeast-2
+          role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
       - name: Check AWS account
         shell: bash
         run: |

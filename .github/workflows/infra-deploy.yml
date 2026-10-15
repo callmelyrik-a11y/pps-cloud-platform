@@ -1,3 +1,4 @@
+
 name: Infra CD - PPS Dev Plan / Apply
 
 on:
@@ -21,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_REGION: ap-northeast-2
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   TF_VAR_frontend_bucket_name: ${{ vars.PPS_DEV_FRONTEND_BUCKET_NAME }}
@@ -29,61 +30,129 @@ env:
 
 jobs:
   plan:
-    if: github.ref == 'refs/heads/main'
     name: PPS Dev Plan
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
-    
     defaults:
       run:
         working-directory: infra/terraform/environments/dev
+        shell: bash
+
     steps:
-      - name: Checkou repository
+      # 1. Checkout must happen before running commands in Terraform directory
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      # 2. Inspect actual repository paths
       - name: Check repository paths
         working-directory: ${{ github.workspace }}
-        shell: bash
         run: |
+          echo "===== Workspace ====="
           pwd
+
+          echo "===== Git information ====="
           git branch --show-current
           git rev-parse HEAD
-          git ls-files '*.tf'
+
+          echo "===== Repository root ====="
           ls -la
-    
-      - name: Verify required non-secret configuration
-        shell: bash
-        run: |
-          test -n "$TF_VAR_frontend_bucket_name" || { echo "Missing PPS_DEV_FRONTEND_BUCKET_NAME"; exit 1; }
-          test -n "$TF_VAR_cluster_public_access_cidrs" || { echo "Missing PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS"; exit 1; }
-          if [[ "$TF_VAR_cluster_public_access_cidrs" == *'0.0.0.0/0'* ]]; then
-            echo 'EKS API CIDR cannot be 0.0.0.0/0 in the deployment workflow'; exit 1
+
+          echo "===== Tracked Terraform files ====="
+          git ls-files '*.tf'
+
+          echo "===== Expected Terraform directory ====="
+          if [ -d "infra/terraform/environments/dev" ]; then
+            echo "Terraform directory exists"
+            ls -la infra/terraform/environments/dev
+          else
+            echo "::error::Terraform directory does not exist"
+            echo "===== Available directories ====="
+            find . -maxdepth 6 -type d | sort
+            exit 1
           fi
-      
-      - uses: hashicorp/setup-terraform@v3
+
+      # 3. Validate GitHub Variables
+      - name: Verify required non-secret configuration
+        working-directory: ${{ github.workspace }}
+        run: |
+          test -n "$TF_VAR_frontend_bucket_name" || {
+            echo "::error::Missing PPS_DEV_FRONTEND_BUCKET_NAME"
+            exit 1
+          }
+
+          test -n "$TF_VAR_cluster_public_access_cidrs" || {
+            echo "::error::Missing PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS"
+            exit 1
+          }
+
+          test -n "${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}" || {
+            echo "::error::Missing AWS_TERRAFORM_PLAN_ROLE_ARN"
+            exit 1
+          }
+
+          if [[ "$TF_VAR_cluster_public_access_cidrs" == *'0.0.0.0/0'* ]]; then
+            echo "::error::EKS API CIDR cannot contain 0.0.0.0/0"
+            exit 1
+          fi
+
+          echo "Required configuration is present"
+
+      # 4. Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
-      - name: Configure AWS with existing OIDC Plan role
+
+      # 5. Assume AWS Plan Role using GitHub OIDC
+      - name: Configure AWS credentials - Plan
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-PPS-Plan
+
+      # 6. Verify AWS identity and account
       - name: Verify AWS identity
-        run: aws sts get-caller-identity
-      - name: Check AWS account
-        shell: bash
         run: |
+          aws sts get-caller-identity
+
           ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-          test "$ACCOUNT" = '513329232596' || { echo 'Wrong AWS account'; exit 1; }
+
+          if [ "$ACCOUNT" != "513329232596" ]; then
+            echo "::error::Wrong AWS account: $ACCOUNT"
+            exit 1
+          fi
+
+          echo "AWS account verified: $ACCOUNT"
+
+      # 7. Initialize Terraform backend
       - name: Terraform init
-        run: terraform init -input=false
-      - name: Terraform fmt & validate
-        run: terraform fmt -check -recursive && terraform validate -no-color
+        run: terraform init -input=false -no-color
+
+      # 8. Check Terraform formatting
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      # 9. Validate Terraform configuration
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      # 10. Generate execution plan
       - name: Terraform plan
-        run: terraform plan -input=false -out=tfplan
-      - name: Plan summary
+        run: |
+          terraform plan \
+            -input=false \
+            -no-color \
+            -out=tfplan
+
+      # 11. Display plan
+      - name: Terraform plan summary
         run: terraform show -no-color tfplan
+
+      # 12. Upload saved plan only for apply operation
       - name: Upload saved plan artifact
-        if: inputs.operation == 'apply'
+        if: inputs.operation == 'apply' && vars.PPS_APPLY_ENABLED == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: pps-dev-tfplan
@@ -92,39 +161,92 @@ jobs:
           retention-days: 1
 
   apply:
-    # Both gates are required: explicit manual 'apply' + repo variable true.
-    if: github.ref == 'refs/heads/main' && inputs.operation == 'apply' && vars.PPS_APPLY_ENABLED == 'true'
-    needs: plan
     name: PPS Dev Approved Apply
+
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.operation == 'apply' &&
+      vars.PPS_APPLY_ENABLED == 'true'
+
+    needs: plan
     runs-on: ubuntu-latest
+
     environment: pps-dev
-    permissions: 
-      id-token: write
+
+    permissions:
       contents: read
+      id-token: write
+
     defaults:
       run:
         working-directory: infra/terraform/environments/dev
+        shell: bash
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      # 1. Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Verify Terraform directory
+      - name: Verify Terraform directory
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ ! -d "infra/terraform/environments/dev" ]; then
+            echo "::error::Terraform directory missing"
+            exit 1
+          fi
+
+          echo "Terraform directory verified"
+
+      # 3. Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
-      - name: Configure AWS with existing OIDC Apply role
+
+      # 4. Assume AWS Apply Role using GitHub OIDC
+      - name: Configure AWS credentials - Apply
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Check AWS account
-        shell: bash
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-PPS-Apply
+
+      # 5. Verify AWS identity and account
+      - name: Verify AWS identity
         run: |
+          aws sts get-caller-identity
+
           ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-          test "$ACCOUNT" = '513329232596' || { echo 'Wrong AWS account'; exit 1; }
+
+          if [ "$ACCOUNT" != "513329232596" ]; then
+            echo "::error::Wrong AWS account: $ACCOUNT"
+            exit 1
+          fi
+
+          echo "AWS account verified: $ACCOUNT"
+
+      # 6. Initialize Terraform backend
       - name: Terraform init
-        run: terraform init -input=false
+        run: terraform init -input=false -no-color
+
+      # 7. Download exact plan produced by Plan job
       - name: Download approved plan artifact
         uses: actions/download-artifact@v4
         with:
           name: pps-dev-tfplan
           path: infra/terraform/environments/dev
+
+      # 8. Verify downloaded plan
+      - name: Verify saved plan
+        run: |
+          test -f tfplan || {
+            echo "::error::Saved Terraform plan not found"
+            exit 1
+          }
+
+          echo "Saved Terraform plan found"
+
+      # 9. Apply saved plan
       - name: Apply exact saved plan
-        run: terraform apply -input=false tfplan
+        run: terraform apply -input=false -no-color tfplan

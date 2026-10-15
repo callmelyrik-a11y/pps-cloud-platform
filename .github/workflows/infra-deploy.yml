@@ -32,12 +32,23 @@ jobs:
     if: github.ref == 'refs/heads/main'
     name: PPS Dev Plan
     runs-on: ubuntu-latest
+
+    
     defaults:
       run:
         working-directory: infra/terraform/environments/dev
     steps:
       - name: Checkou repository
         uses: actions/checkout@v4
+      - name: Check repository paths
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          pwd
+          git branch --show-current
+          git rev-parse HEAD
+          git ls-files '*.tf'
+          ls -la
     
       - name: Verify required non-secret configuration
         shell: bash

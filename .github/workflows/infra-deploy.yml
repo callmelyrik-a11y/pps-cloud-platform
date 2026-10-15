@@ -43,6 +43,26 @@ jobs:
       # 1. Checkout must happen before running commands in Terraform directory
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Inspect GitHub OIDC claims
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          TOKEN_JSON=$(curl -fsS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com")
+
+          TOKEN=$(echo "$TOKEN_JSON" | jq -r '.value')
+
+          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2)
+
+          PAYLOAD=$(echo "$PAYLOAD" | tr '_-' '/+')
+
+          case $((${#PAYLOAD} % 4)) in
+            2) PAYLOAD="${PAYLOAD}==" ;;
+            3) PAYLOAD="${PAYLOAD}=" ;;
+          esac
+      
+          echo "$PAYLOAD" | base64 -d | jq '{sub, aud, repository, ref, environment}'
 
       # 2. Inspect actual repository paths
       - name: Check repository paths

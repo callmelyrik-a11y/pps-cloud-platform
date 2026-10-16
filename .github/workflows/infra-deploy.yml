@@ -316,6 +316,50 @@ jobs:
           fi
 
           echo "Saved Terraform plan found"
+
+            # ========================================================
+      # DRY RUN: Verify Apply workflow without creating resources
+      # ========================================================
+
+      - name: Dry-run Apply verification
+        if: inputs.dry_run == true
+        run: |
+          echo "=================================="
+          echo "       TERRAFORM DRY RUN"
+          echo "=================================="
+
+          echo "Apply job started successfully"
+          echo "AWS OIDC authentication succeeded"
+          echo "AWS account verified"
+          echo "Terraform backend initialized"
+          echo "Saved Terraform plan downloaded"
+
+          terraform show -no-color tfplan > /dev/null
+
+          echo "Saved Terraform plan verified"
+
+          echo "=================================="
+          echo "No terraform apply command executed"
+          echo "No AWS infrastructure deployment"
+          echo "=================================="
+
+      # ========================================================
+      # REAL APPLY: Deploy AWS resources
+      # ========================================================
+
+      - name: Apply exact saved plan
+        if: >-
+          inputs.dry_run == false &&
+          vars.PPS_APPLY_ENABLED == 'true'
+        run: |
+          echo "===== Terraform Apply ====="
+
+          terraform apply \
+            -input=false \
+            -no-color \
+            tfplan
+
+          echo "Terraform Apply completed"
   # ============================================================
   # JOB 3: Discord Notification
   # ============================================================
@@ -448,46 +492,4 @@ jobs:
 
           echo "Discord notification sent"
 
-      # ========================================================
-      # DRY RUN: Verify Apply workflow without creating resources
-      # ========================================================
 
-      - name: Dry-run Apply verification
-        if: inputs.dry_run == true
-        run: |
-          echo "=================================="
-          echo "       TERRAFORM DRY RUN"
-          echo "=================================="
-
-          echo "Apply job started successfully"
-          echo "AWS OIDC authentication succeeded"
-          echo "AWS account verified"
-          echo "Terraform backend initialized"
-          echo "Saved Terraform plan downloaded"
-
-          terraform show -no-color tfplan > /dev/null
-
-          echo "Saved Terraform plan verified"
-
-          echo "=================================="
-          echo "No terraform apply command executed"
-          echo "No AWS infrastructure deployment"
-          echo "=================================="
-
-      # ========================================================
-      # REAL APPLY: Deploy AWS resources
-      # ========================================================
-
-      - name: Apply exact saved plan
-        if: >-
-          inputs.dry_run == false &&
-          vars.PPS_APPLY_ENABLED == 'true'
-        run: |
-          echo "===== Terraform Apply ====="
-
-          terraform apply \
-            -input=false \
-            -no-color \
-            tfplan
-
-          echo "Terraform Apply completed"

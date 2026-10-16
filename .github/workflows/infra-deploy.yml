@@ -208,6 +208,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+          # Terraform 설치: Dry-run과 실제 Apply 모두 필요
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ vars.TF_VERSION }}
+
+      - name: Verify Terraform installation
+        run: terraform version
+
       # 2. Verify real Apply authorization
       - name: Check Apply authorization
         if: inputs.dry_run == false

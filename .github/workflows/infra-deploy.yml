@@ -203,19 +203,19 @@ jobs:
         working-directory: infra/terraform/environments/dev
 
     steps:
-
       # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-          # Terraform 설치: Dry-run과 실제 Apply 모두 필요
+      # Terraform 설치: Dry-run과 실제 Apply 모두 필요
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ vars.TF_VERSION }}
 
-      - name: Verify Terraform installation
-        run: terraform version
+      - name: Verify Terraform installation and executable
+        run: |
+          command -v terraform
 
       # 2. Verify real Apply authorization
       - name: Check Apply authorization

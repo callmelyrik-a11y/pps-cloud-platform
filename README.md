@@ -721,10 +721,3 @@ git remote set-url origin https://github.com/callmelyrik-a11y/pps-cloud-platform
 
 ⸻
 
-참고 문서
-
-* 프로젝트 저장소
-* 기존 저장소·CI/CD 운영 문서
-* AWS OIDC 신뢰 정책
-* 애플리케이션 배포 준비
-* 인프라 아키텍처

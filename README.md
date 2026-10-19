@@ -19,6 +19,8 @@
 
 위 표는 프로젝트 설계 방향입니다. 실제 생성 대상과 배포 조건은 현재 Terraform 코드와 `.github/workflows/`를 기준으로 확인하세요. ECS 포함 여부도 실제 코드에서 확인합니다.
 
+![PPS CI/CD 아키텍처](https://pps-pipeline-diagram.tonynala97.chatgpt.site/pipeline.png)
+
 ## 1. 참여 전 준비
 
 1. GitHub 계정을 준비하고 저장소 관리자에게 협업자 초대를 요청합니다.

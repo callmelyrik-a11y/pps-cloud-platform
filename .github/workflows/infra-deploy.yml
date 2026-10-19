@@ -1,26 +1,29 @@
-name: Infra CD - PPS Dev Plan / Apply
+name: Infra CI-CD - PPS Dev
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/infra-deploy.yml"
+
   workflow_dispatch:
     inputs:
       operation:
-        description: "Choose Terraform operation"
+        description: "Terraform operation"
         required: true
         type: choice
-        options:
-          - plan
-          - apply
+        options: [plan, apply]
         default: plan
 
       dry_run:
-        description: "Test Apply job without creating AWS resources"
+        description: "Verify Apply job without deploying AWS resources"
         required: true
         type: boolean
         default: true
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: terraform-pps-dev-state
@@ -28,20 +31,18 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
+  TF_VERSION: "1.10.5"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-
   TF_VAR_frontend_bucket_name: ${{ vars.PPS_DEV_FRONTEND_BUCKET_NAME }}
   TF_VAR_cluster_public_access_cidrs: ${{ vars.PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS }}
 
 jobs:
-
   # ============================================================
-  # JOB 1: Terraform Plan
+  # 1. CI: Terraform 형식 및 구성 검사
   # ============================================================
-
-  plan:
-    name: PPS Dev Terraform Plan
+  validate:
+    name: "1. Terraform CI"
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
@@ -51,146 +52,166 @@ jobs:
         working-directory: infra/terraform/environments/dev
 
     steps:
-
-      # 1. Checkout repository
-      - name: Checkout repository
+      - name: Checkout exact commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
-      # 2. Check repository paths
-      - name: Check repository paths
-        working-directory: ${{ github.workspace }}
-        run: |
-          echo "===== Workspace ====="
-          pwd
-
-          echo "===== Git information ====="
-          git branch --show-current
-          git rev-parse HEAD
-
-          echo "===== Terraform files ====="
-          git ls-files '*.tf'
-
-          echo "===== Terraform directory ====="
-
-          if [ ! -d "infra/terraform/environments/dev" ]; then
-            echo "::error::Terraform directory does not exist"
-            find . -maxdepth 6 -type d | sort
-            exit 1
-          fi
-
-          ls -la infra/terraform/environments/dev
-
-          echo "Terraform directory verified"
-
-      # 3. Validate required configuration
-      - name: Verify required configuration
-        working-directory: ${{ github.workspace }}
-        env:
-          PLAN_ROLE_ARN: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
-        run: |
-          if [ -z "$TF_VAR_frontend_bucket_name" ]; then
-            echo "::error::Missing PPS_DEV_FRONTEND_BUCKET_NAME"
-            exit 1
-          fi
-
-          if [ -z "$TF_VAR_cluster_public_access_cidrs" ]; then
-            echo "::error::Missing PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS"
-            exit 1
-          fi
-
-          if [ -z "$PLAN_ROLE_ARN" ]; then
-            echo "::error::Missing AWS_TERRAFORM_PLAN_ROLE_ARN"
-            exit 1
-          fi
-
-          if [[ "$TF_VAR_cluster_public_access_cidrs" == *'0.0.0.0/0'* ]]; then
-            echo "::error::EKS API CIDR cannot contain 0.0.0.0/0"
-            exit 1
-          fi
-
-          echo "Required configuration verified"
-
-      # 4. Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.10.5"
+          terraform_version: ${{ env.TF_VERSION }}
 
-      # 5. Configure AWS credentials using Plan Role
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize without backend
+        run: terraform init -backend=false -input=false -no-color
+
+      - name: Validate Terraform configuration
+        run: terraform validate -no-color
+
+  # ============================================================
+  # 2. CD: AWS OIDC 인증 및 실행 계획 생성
+  # ============================================================
+  plan:
+    name: "2. Terraform Plan"
+    needs: validate
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/terraform/environments/dev
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Verify required configuration
+        env:
+          PLAN_ROLE_ARN: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+
+          test -n "$PLAN_ROLE_ARN" || {
+            echo "::error::Missing AWS_TERRAFORM_PLAN_ROLE_ARN"
+            exit 1
+          }
+
+          test -n "$TF_VAR_frontend_bucket_name" || {
+            echo "::error::Missing PPS_DEV_FRONTEND_BUCKET_NAME"
+            exit 1
+          }
+
+          python3 - <<'PY'
+          import ipaddress
+          import json
+          import os
+
+          try:
+              cidrs = json.loads(
+                  os.environ["TF_VAR_cluster_public_access_cidrs"]
+              )
+
+              if not isinstance(cidrs, list) or not cidrs:
+                  raise ValueError("A non-empty JSON array is required")
+
+              for cidr in cidrs:
+                  if not isinstance(cidr, str):
+                      raise ValueError("Every CIDR must be a string")
+                  network = ipaddress.ip_network(cidr, strict=False)
+                  if network.prefixlen == 0:
+                      raise ValueError("/0 public access is prohibited")
+
+          except (ValueError, TypeError) as exc:
+              raise SystemExit(f"Invalid EKS API CIDR configuration: {exc}")
+
+          print("Required configuration verified")
+          PY
+
       - name: Configure AWS credentials - Plan
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: "513329232596"
           role-session-name: GitHubActions-PPS-Plan
           retry-max-attempts: 3
 
-      # 6. Verify AWS account
       - name: Verify AWS identity
-        run: |
-          echo "===== AWS Identity ====="
-          aws sts get-caller-identity
+        run: aws sts get-caller-identity
 
-          ACCOUNT=$(aws sts get-caller-identity \
-            --query Account \
-            --output text)
-
-          if [ "$ACCOUNT" != "513329232596" ]; then
-            echo "::error::Wrong AWS account: $ACCOUNT"
-            exit 1
-          fi
-
-          echo "AWS account verified: $ACCOUNT"
-
-      # 7. Terraform init
       - name: Terraform init
         run: terraform init -input=false -no-color
 
-      # 8. Terraform format check
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive
-
-      # 9. Terraform validate
-      - name: Terraform validate
-        run: terraform validate -no-color
-
-      # 10. Terraform plan
       - name: Terraform plan
         run: |
           terraform plan \
             -input=false \
             -no-color \
+            -lock-timeout=5m \
             -out=tfplan
 
-      # 11. Display plan summary
-      - name: Terraform plan summary
+      - name: Display saved plan
         run: terraform show -no-color tfplan
 
-      # 12. Upload plan for Apply job
-      - name: Upload saved plan artifact
-        if: inputs.operation == 'apply'
+      - name: Write plan summary
+        run: |
+          python3 - <<'PY'
+          import os
+
+          with open(
+              os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8"
+          ) as summary:
+              summary.write("## PPS Terraform Plan\n\n")
+              summary.write(f"- Commit: `{os.environ['GITHUB_SHA']}`\n")
+              summary.write(
+                  "- Review the plan in this job's log before "
+                  "approving the pps-dev deployment.\n"
+              )
+          PY
+
+      - name: Upload plan and provider lock file
+        if: >-
+          github.event_name == 'push' ||
+          inputs.operation == 'apply'
         uses: actions/upload-artifact@v4
         with:
-          name: pps-dev-tfplan
-          path: infra/terraform/environments/dev/tfplan
+          name: pps-dev-tfplan-${{ github.run_id }}
+          path: |
+            infra/terraform/environments/dev/tfplan
+            infra/terraform/environments/dev/.terraform.lock.hcl
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 
   # ============================================================
-  # JOB 2: Terraform Apply / Dry Run
+  # 3. 승인 후 저장된 Plan 그대로 AWS에 적용
   # ============================================================
-
   apply:
-    name: PPS Dev Terraform Apply
-
+    name: "3. Approve and Deploy AWS"
     needs: plan
 
     if: >-
       github.ref == 'refs/heads/main' &&
-      inputs.operation == 'apply'
+      (
+        github.event_name == 'push' ||
+        inputs.operation == 'apply'
+      )
 
     runs-on: ubuntu-latest
-
     environment: pps-dev
 
     permissions:
@@ -203,293 +224,280 @@ jobs:
         working-directory: infra/terraform/environments/dev
 
     steps:
-      # 1. Checkout repository
-      - name: Checkout repository
+      - name: Checkout exact commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
-      # Terraform 설치: Dry-run과 실제 Apply 모두 필요
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ vars.TF_VERSION }}
+          terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Verify Terraform installation and executable
-        run: |
-          command -v terraform
-
-      # 2. Verify real Apply authorization
-      - name: Check Apply authorization
-        if: inputs.dry_run == false
-        working-directory: ${{ github.workspace }}
+      - name: Verify real Apply authorization
+        if: >-
+          github.event_name == 'push' ||
+          inputs.dry_run == false
         env:
           APPLY_ENABLED: ${{ vars.PPS_APPLY_ENABLED }}
         run: |
+          set -euo pipefail
+
           if [ "$APPLY_ENABLED" != "true" ]; then
-            echo "::error::Actual Apply is disabled"
-            echo "Set PPS_APPLY_ENABLED=true to deploy resources"
+            echo "::error::Set PPS_APPLY_ENABLED=true for actual deployment"
             exit 1
           fi
 
-          echo "Actual Apply is authorized"
-
-      # 3. Verify Terraform directory
-      - name: Verify Terraform directory
-        working-directory: ${{ github.workspace }}
+      - name: Verify Apply role
+        env:
+          APPLY_ROLE_ARN: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
         run: |
-          if [ ! -d "infra/terraform/environments/dev" ]; then
-            echo "::error::Terraform directory missing"
+          test -n "$APPLY_ROLE_ARN" || {
+            echo "::error::Missing AWS_TERRAFORM_APPLY_ROLE_ARN"
             exit 1
-          fi
+          }
 
-          echo "Terraform directory verified"
-
-      # 4. Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.10.5"
-
-      # 5. Inspect Apply OIDC claims
-      # Diagnostic step: remove after successful authentication
-      - name: Inspect Apply OIDC subject
-        working-directory: ${{ github.workspace }}
-        run: |
-          RESPONSE=$(curl -fsS \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
-
-          TOKEN=$(echo "$RESPONSE" | jq -r '.value')
-
-          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2 | tr '_-' '/+')
-
-          case $((${#PAYLOAD} % 4)) in
-            2) PAYLOAD="${PAYLOAD}==" ;;
-            3) PAYLOAD="${PAYLOAD}=" ;;
-          esac
-
-          echo "$PAYLOAD" | base64 -d \
-            | jq '{sub, aud, repository, ref, environment}'
-
-      # 6. Configure AWS credentials using Apply Role
       - name: Configure AWS credentials - Apply
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: "513329232596"
           role-session-name: GitHubActions-PPS-Apply
           retry-max-attempts: 3
 
-      # 7. Verify AWS identity
       - name: Verify AWS identity
-        run: |
-          echo "===== AWS Identity ====="
-          aws sts get-caller-identity
+        run: aws sts get-caller-identity
 
-          ACCOUNT=$(aws sts get-caller-identity \
-            --query Account \
-            --output text)
-
-          if [ "$ACCOUNT" != "513329232596" ]; then
-            echo "::error::Wrong AWS account: $ACCOUNT"
-            exit 1
-          fi
-
-          echo "AWS account verified: $ACCOUNT"
-
-      # 8. Terraform init
-      - name: Terraform init
-        run: terraform init -input=false -no-color
-
-      # 9. Download saved plan
-      - name: Download approved plan artifact
+      - name: Download approved plan
         uses: actions/download-artifact@v4
         with:
-          name: pps-dev-tfplan
+          name: pps-dev-tfplan-${{ github.run_id }}
           path: infra/terraform/environments/dev
 
-      # 10. Verify saved plan
+      - name: Verify downloaded files
+        run: |
+          test -f tfplan
+          test -f .terraform.lock.hcl
+
+      - name: Terraform init with locked providers
+        run: |
+          terraform init \
+            -input=false \
+            -no-color \
+            -lockfile=readonly
+
       - name: Verify saved plan
+        run: terraform show -no-color tfplan > /dev/null
+
+      - name: Dry-run verification
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.dry_run == true
         run: |
-          if [ ! -f tfplan ]; then
-            echo "::error::Saved Terraform plan not found"
-            exit 1
-          fi
-
-          echo "Saved Terraform plan found"
-
-            # ========================================================
-      # DRY RUN: Verify Apply workflow without creating resources
-      # ========================================================
-
-      - name: Dry-run Apply verification
-        if: inputs.dry_run == true
-        run: |
-          echo "=================================="
-          echo "       TERRAFORM DRY RUN"
-          echo "=================================="
-
-          echo "Apply job started successfully"
-          echo "AWS OIDC authentication succeeded"
-          echo "AWS account verified"
-          echo "Terraform backend initialized"
-          echo "Saved Terraform plan downloaded"
-
-          terraform show -no-color tfplan > /dev/null
-
-          echo "Saved Terraform plan verified"
-
-          echo "=================================="
-          echo "No terraform apply command executed"
-          echo "No AWS infrastructure deployment"
-          echo "=================================="
-
-      # ========================================================
-      # REAL APPLY: Deploy AWS resources
-      # ========================================================
+          echo "OIDC authentication succeeded"
+          echo "Backend initialized"
+          echo "Saved plan verified"
+          echo "Dry-run completed; terraform apply was not executed"
 
       - name: Apply exact saved plan
         if: >-
-          inputs.dry_run == false &&
-          vars.PPS_APPLY_ENABLED == 'true'
+          github.event_name == 'push' ||
+          inputs.dry_run == false
         run: |
-          echo "===== Terraform Apply ====="
-
           terraform apply \
             -input=false \
             -no-color \
+            -lock-timeout=5m \
             tfplan
 
-          echo "Terraform Apply completed"
   # ============================================================
-  # JOB 3: Discord Notification
+  # 4. 성공 / 실패 / 취소 / Dry-run 결과를 Discord로 전송
   # ============================================================
-
   notify:
-    name: Notify Discord
-
-    needs:
-      - plan
-      - apply
-
+    name: "4. Discord Notification"
+    needs: [validate, plan, apply]
     if: always()
-
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send Terraform result to Discord
+      - name: Send pipeline result to Discord
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_THREAD_ID: ${{ vars.DISCORD_THREAD_ID }}
+          DISCORD_FORUM_CHANNEL: ${{ vars.DISCORD_FORUM_CHANNEL }}
+
+          CI_RESULT: ${{ needs.validate.result }}
           PLAN_RESULT: ${{ needs.plan.result }}
           APPLY_RESULT: ${{ needs.apply.result }}
+
+          EVENT_NAME: ${{ github.event_name }}
           OPERATION: ${{ inputs.operation }}
           DRY_RUN: ${{ inputs.dry_run }}
+
           REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          ACTOR: ${{ github.actor }}
           BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+
         shell: bash
         run: |
-          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
 
-          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
-            echo "::error::Missing DISCORD_WEBHOOK_URL"
-            exit 1
-          fi
+          env = os.environ
+          webhook = env.get("DISCORD_WEBHOOK_URL", "").strip()
 
-          if [ "$PLAN_RESULT" = "failure" ] || \
-             [ "$PLAN_RESULT" = "cancelled" ]; then
-            STATUS="❌ Terraform Plan 실패 또는 취소"
-            COLOR=15158332
+          if not webhook:
+              raise SystemExit("Missing DISCORD_WEBHOOK_URL secret")
 
-          elif [ "$OPERATION" = "plan" ]; then
-            STATUS="✅ Terraform Plan 성공"
-            COLOR=3066993
+          ci = env["CI_RESULT"]
+          plan = env["PLAN_RESULT"]
+          apply = env["APPLY_RESULT"]
+          is_push = env["EVENT_NAME"] == "push"
 
-          elif [ "$APPLY_RESULT" = "success" ]; then
-            STATUS="🧪 Terraform Apply Dry Run 성공"
-            COLOR=3447003
+          operation = "apply" if is_push else env.get("OPERATION", "plan")
+          dry_run = (
+              not is_push
+              and env.get("DRY_RUN", "").lower() == "true"
+          )
 
-          elif [ "$APPLY_RESULT" = "success" ]; then
-            STATUS="🚀 Terraform Apply 성공"
-            COLOR=3066993
+          results = [ci, plan, apply]
 
-          elif [ "$APPLY_RESULT" = "failure" ] || \
-               [ "$APPLY_RESULT" = "cancelled" ]; then
-            STATUS="❌ Terraform Apply 실패 또는 취소"
-            COLOR=15158332
+          if "failure" in results:
+              title = "❌ PPS Terraform 파이프라인 실패"
+              color = 15158332
+          elif "cancelled" in results:
+              title = "⚠️ PPS Terraform 파이프라인 취소"
+              color = 15844367
+          elif ci != "success" or plan != "success":
+              title = "⚠️ PPS Terraform 검사 또는 Plan 미완료"
+              color = 15844367
+          elif operation == "plan":
+              title = "✅ PPS Terraform Plan 완료"
+              color = 3066993
+          elif apply == "success" and dry_run:
+              title = "🧪 PPS Terraform Dry-run 완료"
+              color = 3447003
+          elif apply == "success":
+              title = "🚀 PPS Terraform AWS Apply 완료"
+              color = 3066993
+          else:
+              title = "⚠️ PPS Terraform Apply 미실행"
+              color = 15844367
 
-          else
-            STATUS="⚠️ Terraform Apply 미실행"
-            COLOR=15844367
-          fi
+          run_url = (
+              f"{env['SERVER_URL']}/{env['REPOSITORY']}"
+              f"/actions/runs/{env['RUN_ID']}"
+          )
 
-          RUN_URL="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
-
-          PAYLOAD=$(jq -n \
-            --arg title "$STATUS" \
-            --arg repository "$REPOSITORY" \
-            --arg branch "$BRANCH" \
-            --arg actor "$ACTOR" \
-            --arg operation "$OPERATION" \
-            --arg plan "$PLAN_RESULT" \
-            --arg apply "$APPLY_RESULT" \
-            --arg url "$RUN_URL" \
-            --argjson color "$COLOR" \
-            '{
-              username: "PPS Terraform Bot",
-              embeds: [
-                {
-                  title: $title,
-                  color: $color,
-                  fields: [
-                    {
-                      name: "Repository",
-                      value: $repository,
-                      inline: false
-                    },
-                    {
-                      name: "Branch",
-                      value: $branch,
-                      inline: true
-                    },
-                    {
-                      name: "Actor",
-                      value: $actor,
-                      inline: true
-                    },
-                    {
-                      name: "Operation",
-                      value: $operation,
-                      inline: true
-                    },
-                    {
-                      name: "Plan Result",
-                      value: $plan,
-                      inline: true
-                    },
-                    {
-                      name: "Apply Result",
-                      value: $apply,
-                      inline: true
-                    }
+          payload = {
+              "username": "PPS Terraform Bot",
+              "allowed_mentions": {"parse": []},
+              "embeds": [{
+                  "title": title,
+                  "url": run_url,
+                  "color": color,
+                  "fields": [
+                      {
+                          "name": "Repository",
+                          "value": env["REPOSITORY"],
+                          "inline": False,
+                      },
+                      {
+                          "name": "Branch",
+                          "value": env["BRANCH"],
+                          "inline": True,
+                      },
+                      {
+                          "name": "Actor",
+                          "value": env["ACTOR"],
+                          "inline": True,
+                      },
+                      {
+                          "name": "Commit",
+                          "value": env["COMMIT_SHA"][:12],
+                          "inline": True,
+                      },
+                      {
+                          "name": "Mode",
+                          "value": (
+                              "Dry-run" if dry_run and operation == "apply"
+                              else operation
+                          ),
+                          "inline": True,
+                      },
+                      {
+                          "name": "CI",
+                          "value": ci,
+                          "inline": True,
+                      },
+                      {
+                          "name": "Plan",
+                          "value": plan,
+                          "inline": True,
+                      },
+                      {
+                          "name": "Apply",
+                          "value": apply,
+                          "inline": True,
+                      },
                   ],
-                  url: $url,
-                  footer: {
-                    text: "PPS Cloud Platform | Terraform CI/CD"
-                  }
-                }
-              ]
-            }')
+                  "footer": {"text": "PPS Cloud Platform | Terraform CI/CD"},
+              }],
+          }
 
-          curl --fail-with-body \
-            --silent \
-            --show-error \
-            --retry 3 \
-            -H "Content-Type: application/json" \
-            -X POST \
-            -d "$PAYLOAD" \
-            "$DISCORD_WEBHOOK_URL"
+          parts = urllib.parse.urlsplit(webhook)
+          query = dict(
+              urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+          )
+          query["wait"] = "true"
 
-          echo "Discord notification sent"
+          thread_id = env.get("DISCORD_THREAD_ID", "").strip()
+          forum = env.get("DISCORD_FORUM_CHANNEL", "").lower() == "true"
 
+          if thread_id:
+              query["thread_id"] = thread_id
+          elif forum:
+              payload["thread_name"] = (
+                  f"PPS Terraform - Run {env['RUN_ID']}"
+              )
 
+          url = urllib.parse.urlunsplit((
+              parts.scheme,
+              parts.netloc,
+              parts.path,
+              urllib.parse.urlencode(query),
+              parts.fragment,
+          ))
+
+          request = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "Content-Type": "application/json",
+                  "User-Agent": "PPS-Terraform-CI/1.0",
+              },
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  print(f"Discord notification sent: HTTP {response.status}")
+          except urllib.error.HTTPError as exc:
+              # Webhook URL이나 토큰은 로그에 출력하지 않습니다.
+              raise SystemExit(
+                  f"Discord notification failed: HTTP {exc.code}. "
+                  "Check webhook permissions and forum/thread settings."
+              ) from None
+          except urllib.error.URLError:
+              raise SystemExit(
+                  "Discord notification failed: network error"
+              ) from None
+          PY

@@ -35,37 +35,6 @@ AWS 인증	GitHub OIDC 기반 IAM Role
 
 https://github.com/callmelyrik-a11y/pps-cloud-platform
 
-프로젝트 폴더 구조
-
-pps-cloud-platform/
-├── .github/
-│   └── workflows/
-│       ├── infra-ci.yml
-│       ├── infra-deploy.yml
-│       ├── app-ci.yml
-│       ├── app-deploy.yml
-│       └── frontend-deploy.yml
-│
-├── apps/
-│   ├── frontend/
-│   └── services/
-│       ├── organization/
-│       └── notice/
-│
-├── infra/
-│   ├── terraform/
-│   │   └── environments/
-│   │       └── dev/
-│   └── kubernetes/
-│
-├── docs/
-├── .gitignore
-└── README.md
-
-프로젝트는 하나의 GitHub 저장소에서 프런트엔드, 백엔드, Kubernetes 및 Terraform 코드를 함께 관리하는 Monorepo 구조를 사용합니다.
-
-⸻
-
 2. 프로젝트 최초 참여 방법
 
 STEP 1. GitHub 저장소 접근 권한 확인

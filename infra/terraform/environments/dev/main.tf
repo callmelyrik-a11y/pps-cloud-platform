@@ -1,10 +1,9 @@
 
-resource "aws_key_pair" "tf_keypair" {
-  key_name   = "tf_keypair"
-  public_key = file("C:\\sshkey\\tf_keypair.pub")
-  tags = {
-    Name = "tf_keypair"
-  }
+resource "aws_key_pair" "g2b_konep_keypair" {
+  key_name   = "${local.g2b_konep_name_prefix}-keypair"
+  public_key = file("${path.module}/keys/tf_keypair.pub")
+
+  tags = local.g2b_konep_common_tags
 }
 
 data "aws_ami" "LatestAmi" {

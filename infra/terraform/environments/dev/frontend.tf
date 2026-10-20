@@ -26,66 +26,13 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
   signing_protocol                  = "sigv4"
 }
 
-resource "aws_wafv2_web_acl" "cloudfront" {
-  provider = aws.us_east_1
-  name     = "${local.name}-cloudfront-waf"
-  scope    = "CLOUDFRONT"
 
-  default_action {
-    allow {}
-  }
-
-  rule {
-    name     = "AWSManagedCommonRules"
-    priority = 0
-    override_action {
-      none {}
-    }
-    statement {
-      managed_rule_group_statement {
-        name        = "AWSManagedRulesCommonRuleSet"
-        vendor_name = "AWS"
-      }
-    }
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "${local.name}-common-rules"
-      sampled_requests_enabled   = true
-    }
-  }
-
-  rule {
-    name     = "IPRateLimit"
-    priority = 1
-    action {
-      block {}
-    }
-    statement {
-      rate_based_statement {
-        limit              = 2000
-        aggregate_key_type = "IP"
-      }
-    }
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "${local.name}-rate-limit"
-      sampled_requests_enabled   = true
-    }
-  }
-
-  visibility_config {
-    cloudwatch_metrics_enabled = true
-    metric_name                = "${local.name}-cloudfront-waf"
-    sampled_requests_enabled   = true
-  }
-}
 
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   default_root_object = "index.html"
   aliases             = local.custom_domain_enabled ? [var.public_domain_name] : []
   price_class         = "PriceClass_200"
-  web_acl_id          = aws_wafv2_web_acl.cloudfront.arn
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -140,11 +87,11 @@ resource "aws_s3_bucket_policy" "frontend" {
     Statement = [{
       Sid       = "AllowCloudFrontRead"
       Effect    = "Allow"
-      Principal = { Service = "cloudfront.amazonaws.com" }
+      Principal = { Service = "cloudfront.amazong2b_konep.com" }
       Action    = "s3:GetObject"
       Resource  = "${aws_s3_bucket.frontend.arn}/*"
       Condition = {
-        StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn }
+        StringEquals = { "g2b_konep:SourceArn" = aws_cloudfront_distribution.frontend.arn }
       }
     }]
   })

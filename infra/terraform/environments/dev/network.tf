@@ -1,18 +1,18 @@
-resource "aws_vpc" "main" {
+resource "aws_vpc" "g2b_konep" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
   tags                 = { Name = "${local.name}-vpc" }
 }
 
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
+resource "aws_internet_gateway" "g2b_konep" {
+  vpc_id = aws_vpc.g2b_konep.id
   tags   = { Name = "${local.name}-igw" }
 }
 
 resource "aws_subnet" "tier" {
   for_each                = local.subnets
-  vpc_id                  = aws_vpc.main.id
+  vpc_id                  = aws_vpc.g2b_konep.id
   cidr_block              = each.value.cidr
   availability_zone       = each.value.az
   map_public_ip_on_launch = each.value.tier == "public"
@@ -26,7 +26,6 @@ resource "aws_subnet" "tier" {
 
 resource "aws_eip" "nat" {
   for_each = toset(["a", "b"])
-  domain   = "vpc"
   tags     = { Name = "${local.name}-nat-eip-${each.key}" }
 }
 
@@ -34,15 +33,15 @@ resource "aws_nat_gateway" "nat" {
   for_each      = toset(["a", "b"])
   allocation_id = aws_eip.nat[each.key].id
   subnet_id     = aws_subnet.tier["public_${each.key}"].id
-  depends_on    = [aws_internet_gateway.main]
+  depends_on    = [aws_internet_gateway.g2b_konep]
   tags          = { Name = "${local.name}-nat-${each.key}" }
 }
 
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = aws_vpc.g2b_konep.id
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
+    gateway_id = aws_internet_gateway.g2b_konep.id
   }
   tags = { Name = "${local.name}-public-rt" }
 }
@@ -55,7 +54,7 @@ resource "aws_route_table_association" "public" {
 
 resource "aws_route_table" "app" {
   for_each = toset(["a", "b"])
-  vpc_id   = aws_vpc.main.id
+  vpc_id   = aws_vpc.g2b_konep.id
   route {
     cidr_block     = "0.0.0.0/0"
     nat_gateway_id = aws_nat_gateway.nat[each.key].id
@@ -72,7 +71,7 @@ resource "aws_route_table_association" "app" {
 # DB subnets have only the automatic VPC-local route, no NAT / IGW default route.
 resource "aws_route_table" "db" {
   for_each = toset(["a", "b"])
-  vpc_id   = aws_vpc.main.id
+  vpc_id   = aws_vpc.g2b_konep.id
   tags     = { Name = "${local.name}-db-${each.key}-rt" }
 }
 

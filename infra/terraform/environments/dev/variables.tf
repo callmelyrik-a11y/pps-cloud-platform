@@ -5,7 +5,7 @@ variable "region" {
 
 variable "project" {
   type    = string
-  default = "pps"
+  default = "g2b_konep"
 }
 
 variable "environment" {
@@ -15,12 +15,12 @@ variable "environment" {
 
 variable "vpc_cidr" {
   type    = string
-  default = "10.20.0.0/16"
+  default = "172.20.0.0/16"
 }
 
 variable "availability_zones" {
   type    = list(string)
-  default = ["ap-northeast-2a", "ap-northeast-2b"]
+  default = ["ap-northeast-2a", "ap-northeast-2c"]
 
   validation {
     condition     = length(var.availability_zones) == 2 && var.availability_zones[0] != var.availability_zones[1]
@@ -41,17 +41,17 @@ variable "node_instance_type" {
 
 variable "node_min_size" {
   type    = number
-  default = 2
+  default = 4
 }
 
 variable "node_desired_size" {
   type    = number
-  default = 2
+  default = 4
 }
 
 variable "node_max_size" {
   type    = number
-  default = 4
+  default = 10
 }
 
 variable "eks_admin_principal_arn" {
@@ -102,7 +102,7 @@ variable "alb_controller_policy_arn" {
 variable "public_domain_name" {
   description = "Optional actual frontend FQDN in a hosted zone you control."
   type        = string
-  default     = null
+  default     = "govbridge.store"
 
   validation {
     condition     = (var.public_domain_name == null) == (var.hosted_zone_id == null)
@@ -113,5 +113,5 @@ variable "public_domain_name" {
 variable "hosted_zone_id" {
   description = "Route 53 PUBLIC hosted zone ID for public_domain_name; supply both or neither."
   type        = string
-  default     = null
+  default     = "Z08754611FGFIL4NXLZGN"
 }

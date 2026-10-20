@@ -1,9 +1,12 @@
 
 resource "aws_key_pair" "g2b_konep_keypair" {
-  key_name   = "${local.g2b_konep_name_prefix}-keypair"
-  public_key = file("${path.module}/keys/tf_keypair.pub")
+  key_name = "g2b-konep-keypair"
 
-  tags = local.g2b_konep_common_tags
+  public_key = file("${path.module}/key/tf_keypair.pub")
+
+  tags = {
+    Name = "g2b-konep-keypair"
+  }
 }
 
 data "aws_ami" "LatestAmi" {

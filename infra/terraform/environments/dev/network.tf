@@ -26,7 +26,6 @@ resource "aws_subnet" "tier" {
 
 resource "aws_eip" "nat" {
   for_each = toset(["a", "b"])
-  dog2b_konep   = "vpc"
   tags     = { Name = "${local.name}-nat-eip-${each.key}" }
 }
 

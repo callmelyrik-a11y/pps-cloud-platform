@@ -14,7 +14,7 @@ resource "aws_autoscaling_group_tag" "cluster_autoscaler_cluster" {
   tag {
     key                 = "k8s.io/cluster-autoscaler/${local.cluster_name}"
     value               = "owned"
-    propagate_at_launch = false
+    propagate_at_launch = true
   }
 }
 

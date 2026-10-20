@@ -1,7 +1,7 @@
-resource "aws_security_group" "g2b_KonepBastionSG" {
-  name        = "g2b_Konep-bastion-sg"
+resource "aws_security_group" "g2bkonepBastionSG" {
+  name        = "g2bkonep-bastion-sg"
   description = "SSH access for bastion host"
-  vpc_id      = aws_vpc.g2b_KonepVPC.id
+  vpc_id      = aws_vpc.g2bkonepVPC.id
 
   ingress {
     from_port   = 22
@@ -18,20 +18,20 @@ resource "aws_security_group" "g2b_KonepBastionSG" {
   }
 }
 
-resource "aws_instance" "g2b_KonepBastion" {
+resource "aws_instance" "g2bkonepBastion" {
   ami           = data.aws_ami.LatestAmi.id
   instance_type = "t3.micro"
   key_name      = aws_key_pair.tf_keypair.key_name
 
-  subnet_id = aws_subnet.g2b_KonepPublic1Subnet.id
+  subnet_id = aws_subnet.g2bkonepPublic1Subnet.id
 
   vpc_security_group_ids = [
-    aws_security_group.g2b_KonepBastionSG.id
+    aws_security_group.g2bkonepBastionSG.id
   ]
 
   associate_public_ip_address = true
 
   tags = {
-    Name = "g2b_KonepBastion"
+    Name = "g2bkonepBastion"
   }
 }

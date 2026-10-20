@@ -87,11 +87,11 @@ resource "aws_s3_bucket_policy" "frontend" {
     Statement = [{
       Sid       = "AllowCloudFrontRead"
       Effect    = "Allow"
-      Principal = { Service = "cloudfront.amazong2b_konep.com" }
+      Principal = { Service = "cloudfront.amazonaws.com" }
       Action    = "s3:GetObject"
       Resource  = "${aws_s3_bucket.frontend.arn}/*"
       Condition = {
-        StringEquals = { "g2b_konep:SourceArn" = aws_cloudfront_distribution.frontend.arn }
+        StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn }
       }
     }]
   })

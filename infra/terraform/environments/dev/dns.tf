@@ -28,10 +28,11 @@ resource "aws_acm_certificate_validation" "frontend" {
 }
 
 resource "aws_route53_record" "frontend_alias" {
-  count   = local.custom_domain_enabled ? 1 : 0
-  zone_id = var.hosted_zone_id
-  name    = var.public_domain_name
-  type    = "A"
+  count           = local.custom_domain_enabled ? 1 : 0
+  zone_id         = var.hosted_zone_id
+  name            = var.public_domain_name
+  type            = "A"
+  allow_overwrite = true
 
   alias {
     name                   = aws_cloudfront_distribution.frontend.domain_name

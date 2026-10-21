@@ -17,7 +17,7 @@ resource "aws_iam_role" "g2b_konep_ec2_s3_read" {
 # 기존 Role을 담는 Instance Profile 생성
 resource "aws_iam_instance_profile" "g2b_konep_ec2_s3_read" {
   name = "g2b-konep-dev-ec2-s3-read-profile"
-  role = data.aws_iam_role.g2b_konep_ec2_s3_read.name
+  role = aws_iam_role.g2b_konep_ec2_s3_read.name
 }
 
 resource "aws_launch_template" "g2bkonepLaunchTemplate" {

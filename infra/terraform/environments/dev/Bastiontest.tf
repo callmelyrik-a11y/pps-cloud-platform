@@ -22,6 +22,7 @@ resource "aws_instance" "g2bkonepBastion" {
   ami           = data.aws_ami.LatestAmi.id
   instance_type = "t3.micro"
   key_name      = aws_key_pair.g2b_konep_keypair.key_name
+  iam_instance_profile = aws_iam_instance_profile.g2b_konep_ec2_s3_read.name
 
   subnet_id = aws_subnet.g2bkonepPublic1Subnet.id
 

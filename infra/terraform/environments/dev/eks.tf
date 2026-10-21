@@ -47,9 +47,11 @@ resource "aws_cloudwatch_log_group" "g2b_konep_eks_control_plane" {
 # ============================================================
 
 resource "aws_eks_cluster" "g2b_konep_eks" {
-  name     = local.g2b_konep_common_tags
+  name     = "g2b-konep-dev-eks"
   role_arn = aws_iam_role.g2b_konep_eks_cluster_role.arn
   version  = var.cluster_version
+
+  tags = local.g2b_konep_common_tags
 
   access_config {
     authentication_mode = "API_AND_CONFIG_MAP"

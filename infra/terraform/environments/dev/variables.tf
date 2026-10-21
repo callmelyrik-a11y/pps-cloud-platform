@@ -23,7 +23,7 @@ variable "availability_zones" {
   default = ["ap-northeast-2a", "ap-northeast-2c"]
 
   validation {
-    condition     = length(var.availability_zones) == 2 
+    condition     = length(var.availability_zones) == 2
     error_message = "Choose two distinct AZs available in your AWS account."
   }
 }

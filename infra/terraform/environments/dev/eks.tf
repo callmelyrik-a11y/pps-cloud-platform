@@ -34,7 +34,7 @@ resource "aws_iam_role_policy_attachment" "g2b_konep_eks_cluster_policy" {
 # ============================================================
 
 resource "aws_cloudwatch_log_group" "g2b_konep_eks_control_plane" {
-  name              = "/aws/eks/${local.cluser_name}/cluster"
+  name              = "/aws/eks/${local.cluster_name}/cluster"
   retention_in_days = 7
 
   tags = merge(local.g2b_konep_common_tags, {

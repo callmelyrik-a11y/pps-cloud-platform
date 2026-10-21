@@ -51,8 +51,6 @@ resource "aws_eks_cluster" "g2b_konep_eks" {
   role_arn = aws_iam_role.g2b_konep_eks_cluster_role.arn
   version  = var.cluster_version
 
-  tags = local.g2b_konep_common_tags
-
   access_config {
     authentication_mode = "API_AND_CONFIG_MAP"
 

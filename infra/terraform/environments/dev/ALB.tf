@@ -51,8 +51,7 @@ resource "aws_lb_listener" "g2bkonepALBhttpslistener" {
   protocol = "HTTPS"
 
   certificate_arn = "arn:aws:acm:ap-northeast-2:513329232596:certificate/1b670da1-5055-45f1-a80d-534002473bda"
-
-  ssl_policy = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  ssl_policy      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
     type             = "forward"

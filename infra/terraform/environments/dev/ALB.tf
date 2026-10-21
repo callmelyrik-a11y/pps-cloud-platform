@@ -30,15 +30,34 @@ resource "aws_lb_listener" "g2bkonepALBhttplistener" {
   }
 }
 
+# ============================================================
+# G2B KONEP - Existing ACM Wildcard Certificate
+# ============================================================
+
+data "aws_acm_certificate" "g2b_konep_origin" {
+  domain      = "*.konep7777.shop"
+  statuses    = ["ISSUED"]
+  most_recent = true
+}
+
+# ============================================================
+# ALB HTTPS Listener - Port 443
+# ============================================================
+
 resource "aws_lb_listener" "g2bkonepALBhttpslistener" {
   load_balancer_arn = aws_lb.g2bkonepALB.arn
-  port              = 443
-  protocol          = "HTTPS"
 
-  certificate_arn = "arn:aws:acm:us-east-1:513329232596:certificate/dedeab73-39dc-41b2-97d9-4ad5b94b2ca7"
+  port     = 443
+  protocol = "HTTPS"
+
+  certificate_arn = "arn:aws:acm:ap-northeast-2:513329232596:certificate/1b670da1-5055-45f1-a80d-534002473bda"
+
+  ssl_policy = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
     type             = "forward"
+
     target_group_arn = aws_lb_target_group.g2bkonepALBtargetgroup.arn
   }
 }
+

@@ -8,14 +8,12 @@ on:
       - "infra/terraform/**"
       - ".github/workflows/infra-ci.yml"
       - ".github/workflows/infra-deploy.yml"
-      - ".github/workflows/terraform-format.yml"
 
   push:
     branches: [main]
     paths:
       - "infra/terraform/**"
       - ".github/workflows/infra-ci.yml"
-      - ".github/workflows/terraform-format.yml"
 
   workflow_dispatch:
 
@@ -23,18 +21,21 @@ permissions:
   contents: read
 
 jobs:
-  secrets:
-    name: Secret leak scan (Gitleaks)
+  # ==========================================================
+  # 1. Secret scanning
+  # ==========================================================
+  security:
+    name: "1. Secret Leak Check"
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout full history
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Scan committed secrets
+      - name: Gitleaks scan
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -42,15 +43,18 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
           GITLEAKS_ENABLE_SUMMARY: "false"
 
+  # ==========================================================
+  # 2. Terraform validation
+  # ==========================================================
   validate:
-    name: Terraform format and validate
-    needs: secrets
+    name: "2. Terraform Validate"
+    needs: security
     runs-on: ubuntu-latest
 
     defaults:
       run:
-        working-directory: infra/terraform/environments/dev
         shell: bash
+        working-directory: infra/terraform/environments/dev
 
     steps:
       - name: Checkout
@@ -64,15 +68,21 @@ jobs:
           terraform_version: "1.10.5"
           terraform_wrapper: false
 
-      - name: Normalize formatter output in CI workspace
-        run: terraform fmt -recursive -list=false
+      - name: Terraform fmt in CI workspace
+        run: |
+          terraform fmt -recursive
+          terraform fmt -check -recursive
 
-      - name: Check formatting
-        run: terraform fmt -check -recursive
+      - name: Clean local Terraform directory
+        run: rm -rf .terraform
 
-      - name: Initialize providers without remote backend
-        run: terraform init -backend=false -input=false -no-color
+      - name: Terraform init without backend
+        run: |
+          terraform init \
+            -backend=false \
+            -input=false \
+            -no-color \
+            -lockfile=readonly
 
-      - name: Validate Terraform
+      - name: Terraform validate
         run: terraform validate -no-color
-

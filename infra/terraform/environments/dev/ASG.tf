@@ -20,6 +20,12 @@ resource "aws_iam_instance_profile" "g2b_konep_ec2_s3_read" {
   role = aws_iam_role.g2b_konep_ec2_s3_read.name
 }
 
+# EC2 Role에 Session Manager 사용 권한 연결
+resource "aws_iam_role_policy_attachment" "g2b_konep_ec2_ssm" {
+  role       = aws_iam_role.g2b_konep_ec2_s3_read.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_launch_template" "g2bkonepLaunchTemplate" {
   name_prefix            = "g2bkonepAutoScalingGroup"
   image_id               = data.aws_ami.LatestAmi.id

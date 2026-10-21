@@ -54,7 +54,7 @@ resource "aws_lb_listener" "g2bkonepALBhttpslistener" {
   ssl_policy      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
-    type             = "forward"
+    type = "forward"
 
     target_group_arn = aws_lb_target_group.g2bkonepALBtargetgroup.arn
   }

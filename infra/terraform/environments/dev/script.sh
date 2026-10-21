@@ -7,6 +7,6 @@ systemctl restart sshd
 
 yum install -y httpd awscli
 
-aws s3 cp s3://konet-static-konep777-090764950166-ap-northeast-2-an/ /var/www/html/ --recursive
+aws s3 cp s3://g2b-konep-513329232596-ap-northeast-2-an/ /var/www/html/ --recursive
 
 systemctl enable --now httpd.service

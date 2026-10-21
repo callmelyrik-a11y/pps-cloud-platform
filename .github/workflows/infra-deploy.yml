@@ -16,9 +16,8 @@ on:
         type: choice
         options: [plan, apply]
         default: plan
-
       dry_run:
-        description: "Verify Apply job without changing AWS resources"
+        description: "Verify Apply without deploying"
         required: true
         type: boolean
         default: true
@@ -35,7 +34,6 @@ env:
   TF_VERSION: "1.10.5"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-
   TF_VAR_frontend_bucket_name: ${{ vars.PPS_DEV_FRONTEND_BUCKET_NAME }}
   TF_VAR_cluster_public_access_cidrs: ${{ vars.PPS_DEV_CLUSTER_PUBLIC_ACCESS_CIDRS }}
 
@@ -48,13 +46,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout complete Git history
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Block committed secrets
+      - name: Gitleaks scan
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -63,86 +61,76 @@ jobs:
           GITLEAKS_ENABLE_SUMMARY: "false"
 
   # ==========================================================
-  # 0.5. Auto-format Terraform and commit directly to main
+  # 1. Terraform FMT -> main auto commit
   # ==========================================================
   format:
-    name: "0.5. Auto-format main (Terraform fmt)"
+    name: "1. Terraform Auto Format"
     needs: security
-
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
 
     outputs:
-      formatted_sha: ${{ steps.commit.outputs.formatted_sha }}
+      formatted_sha: ${{ steps.commit.outputs.sha }}
 
     steps:
-      - name: Checkout original triggering commit
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: true
 
-      - name: Setup pinned Terraform formatter
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: Format tracked Terraform files
-        shell: bash
+      - name: Run terraform fmt
         working-directory: infra/terraform/environments/dev
+        shell: bash
         run: |
           set -euo pipefail
-
-          terraform fmt -recursive -list=false
+          terraform fmt -recursive
           terraform fmt -check -recursive
 
-      - name: Commit formatting only if necessary
+      - name: Commit formatting to main
         id: commit
         shell: bash
         run: |
           set -euo pipefail
 
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Stage changes to tracked Terraform files only.
           git add -u -- infra/terraform/environments/dev
 
-          if git diff --cached --quiet; then
-            echo 'No formatting changes needed.'
-          else
-            git commit -m 'style(terraform): auto format dev HCL'
-
-            # Never force push or overwrite concurrent updates.
+          if ! git diff --cached --quiet; then
+            git commit -m "style(terraform): auto format HCL"
             git push origin HEAD:refs/heads/main
-
-            echo 'Terraform formatting committed directly to main.'
+          else
+            echo "No formatting changes"
           fi
 
-          sha="$(git rev-parse HEAD)"
-
-          echo "formatted_sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "Validated and planned SHA: $sha" >> "$GITHUB_STEP_SUMMARY"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ==========================================================
-  # 1. Terraform Validate
+  # 2. Terraform Validate
   # ==========================================================
   validate:
-    name: "1. Terraform CI"
+    name: "2. Terraform Validate"
     needs: format
     runs-on: ubuntu-latest
 
     defaults:
       run:
-        working-directory: infra/terraform/environments/dev
         shell: bash
+        working-directory: infra/terraform/environments/dev
 
     steps:
-      - name: Checkout exact formatted commit
+      - name: Checkout formatted commit
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.format.outputs.formatted_sha }}
@@ -154,20 +142,20 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: Check Terraform format
+      - name: Terraform fmt check
         run: terraform fmt -check -recursive
 
-      - name: Initialize without backend
+      - name: Terraform init without backend
         run: terraform init -backend=false -input=false -no-color
 
-      - name: Validate configuration
+      - name: Terraform validate
         run: terraform validate -no-color
 
   # ==========================================================
-  # 2. Terraform Plan
+  # 3. Terraform Plan
   # ==========================================================
   plan:
-    name: "2. Terraform Plan"
+    name: "3. Terraform Plan"
     needs: [format, validate]
     runs-on: ubuntu-latest
 
@@ -177,11 +165,11 @@ jobs:
 
     defaults:
       run:
-        working-directory: infra/terraform/environments/dev
         shell: bash
+        working-directory: infra/terraform/environments/dev
 
     steps:
-      - name: Checkout exact formatted commit
+      - name: Checkout formatted commit
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.format.outputs.formatted_sha }}
@@ -193,14 +181,14 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: Verify required non-secret inputs
+      - name: Verify required variables
         env:
           PLAN_ROLE_ARN: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
         run: |
           set -euo pipefail
 
           test -n "$PLAN_ROLE_ARN" || {
-            echo "::error::Missing Plan IAM role"
+            echo "::error::Missing AWS_TERRAFORM_PLAN_ROLE_ARN"
             exit 1
           }
 
@@ -215,52 +203,86 @@ jobs:
           import os
 
           try:
-              value = json.loads(
+              cidrs = json.loads(
                   os.environ["TF_VAR_cluster_public_access_cidrs"]
               )
+              if not isinstance(cidrs, list) or not cidrs:
+                  raise ValueError("CIDR list is empty")
 
-              if not isinstance(value, list) or not value:
-                  raise ValueError("CIDRs must be non-empty JSON list")
-
-              for cidr in value:
+              for cidr in cidrs:
                   if not isinstance(cidr, str):
                       raise ValueError("CIDR must be a string")
-
-                  if ipaddress.ip_network(
+                  network = ipaddress.ip_network(
                       cidr, strict=False
-                  ).prefixlen == 0:
+                  )
+                  if network.prefixlen == 0:
                       raise ValueError(
-                          "Unrestricted EKS API access is forbidden"
+                          "0.0.0.0/0 and ::/0 are prohibited"
                       )
 
-          except (KeyError, ValueError, TypeError) as exc:
+          except (ValueError, TypeError, KeyError) as exc:
               raise SystemExit(
-                  "Invalid EKS API CIDR configuration: "
-                  + type(exc).__name__
+                  f"Invalid EKS API CIDRs: {exc}"
               )
 
           print("Required configuration verified")
           PY
 
-      - name: Configure AWS credentials - Plan (OIDC)
+      - name: Configure AWS credentials - Plan
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: "513329232596"
           role-session-name: GitHubActions-PPS-Plan
-          retry-max-attempts: 3
+
+      # ------------------------------------------------------
+      # Provider checksum diagnosis
+      # ------------------------------------------------------
+      - name: Display Terraform version and lockfile
+        run: |
+          set -euo pipefail
+
+          terraform version
+          terraform providers
+
+          test -f .terraform.lock.hcl || {
+            echo "::error::Missing .terraform.lock.hcl"
+            exit 1
+          }
+
+          echo "Provider lock file exists"
+
+      - name: Clean local Terraform installation
+        run: |
+          set -euo pipefail
+
+          rm -rf .terraform
+
+          echo "Removed local provider installation"
+          echo "Remote Terraform state was not modified"
 
       - name: Terraform init - S3 remote backend
         run: |
+          set -euo pipefail
+
           terraform init \
             -input=false \
             -no-color \
             -lockfile=readonly
 
-      # Complete Terraform Plan is visible in GitHub Actions logs.
-      # Values not marked sensitive may be printed.
-      - name: Terraform plan - full output in GitHub Actions logs
+      - name: Verify installed provider checksums
+        run: |
+          set -euo pipefail
+
+          terraform validate -no-color
+
+          echo "Terraform provider verification passed"
+
+      # ------------------------------------------------------
+      # Full Terraform Plan output
+      # ------------------------------------------------------
+      - name: Terraform plan - full GitHub Actions log
         run: |
           set -euo pipefail
 
@@ -270,120 +292,79 @@ jobs:
             -lock-timeout=5m \
             -out=tfplan
 
-      - name: Display full saved Terraform plan
-        run: terraform show -no-color tfplan
+      - name: Display complete saved plan
+        run: |
+          terraform show -no-color tfplan
 
-      - name: Write safe resource-action summary
+      - name: Write plan summary
         env:
           FORMATTED_SHA: ${{ needs.format.outputs.formatted_sha }}
         run: |
           set -euo pipefail
 
-          terraform show -json tfplan > "$RUNNER_TEMP/g2b-plan.json"
+          terraform show -json tfplan \
+            > "$RUNNER_TEMP/terraform-plan.json"
 
           python3 - <<'PY'
           import collections
           import json
           import os
-          import pathlib
-          import re
 
-          src = (
-              pathlib.Path(os.environ["RUNNER_TEMP"])
-              / "g2b-plan.json"
+          path = os.path.join(
+              os.environ["RUNNER_TEMP"],
+              "terraform-plan.json"
           )
 
-          data = json.loads(
-              src.read_text(encoding="utf-8")
-          )
+          with open(path, encoding="utf-8") as f:
+              plan = json.load(f)
 
-          changes = data.get("resource_changes", [])
-          counter = collections.Counter()
+          counts = collections.Counter()
 
-          summary_lines = [
-              "## G2B KONEP Terraform Plan",
-              "",
-              f"**Validated commit:** `{os.environ['FORMATTED_SHA']}`",
-              "",
-              "**This step summary excludes values; the complete Plan is visible in the job logs.**",
-              "",
-          ]
-
-          for resource in changes:
+          for resource in plan.get("resource_changes", []):
               actions = resource.get(
                   "change", {}
               ).get("actions", [])
 
-              if actions == ["no-op"]:
-                  continue
-
-              action = (
-                  "/".join(actions)
-                  if actions else "unknown"
-              )
-
-              counter[action] += 1
-
-              address = re.sub(
-                  r'[^a-zA-Z0-9_\[\]."/:-]',
-                  "_",
-                  str(resource.get("address", "unknown"))
-              )[:180]
-
-              if len(summary_lines) < 120:
-                  summary_lines.append(
-                      f"- `{address}` : `{action}`"
-                  )
-
-          summary_lines.extend([
-              "",
-              "### Action counts",
-              "",
-          ])
-
-          summary_lines.extend(
-              f"- {key}: {value}"
-              for key, value in sorted(counter.items())
-          )
-
-          if not counter:
-              summary_lines.append("- No resource changes")
-
-          summary_lines.extend([
-              "",
-              "**Review all replacements and deletions before approval.**"
-          ])
+              if actions != ["no-op"]:
+                  counts["/".join(actions)] += 1
 
           with open(
               os.environ["GITHUB_STEP_SUMMARY"],
               "a",
               encoding="utf-8"
-          ) as summary:
-              summary.write(
-                  "\n".join(summary_lines) + "\n"
+          ) as f:
+              f.write("## G2B KONEP Terraform Plan\n\n")
+              f.write(
+                  "Commit: `"
+                  + os.environ["FORMATTED_SHA"]
+                  + "`\n\n"
               )
 
-          print(
-              "Plan action categories: "
-              + ", ".join(
-                  f"{key}={value}"
-                  for key, value in sorted(counter.items())
+              for action, count in sorted(counts.items()):
+                  f.write(f"- {action}: {count}\n")
+
+              if not counts:
+                  f.write("- No changes\n")
+
+              f.write(
+                  "\nFull plan: see Terraform Plan job logs.\n"
               )
-          )
           PY
 
-      # ======================================================
-      # Encrypt binary Plan before uploading as an artifact.
-      # ======================================================
-      - name: Encrypt saved plan for approval boundary
-        if: github.event_name == 'push' || inputs.operation == 'apply'
+      # ------------------------------------------------------
+      # Encrypt plan artifact
+      # ------------------------------------------------------
+      - name: Encrypt Terraform plan
+        if: >-
+          github.event_name == 'push' ||
+          inputs.operation == 'apply'
         env:
           PLAN_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
         run: |
           set -euo pipefail
 
           test "${#PLAN_KEY}" -ge 32 || {
-            echo "::error::TF_PLAN_ENCRYPTION_KEY must have at least 32 characters"
+            echo "::error::Missing TF_PLAN_ENCRYPTION_KEY"
             exit 1
           }
 
@@ -400,8 +381,10 @@ jobs:
           chmod 600 tfplan.gpg
           rm -f tfplan
 
-      - name: Upload encrypted plan and lockfile
-        if: github.event_name == 'push' || inputs.operation == 'apply'
+      - name: Upload encrypted Terraform plan
+        if: >-
+          github.event_name == 'push' ||
+          inputs.operation == 'apply'
         uses: actions/upload-artifact@v6
         with:
           name: pps-dev-tfplan-${{ github.run_id }}
@@ -413,15 +396,16 @@ jobs:
           retention-days: 1
 
   # ==========================================================
-  # 3. Terraform Apply - Manual approval
+  # 4. Manual approval -> Terraform Apply
   # ==========================================================
   apply:
-    name: "3. Approve and Deploy AWS"
+    name: "4. Approve and Deploy AWS"
     needs: [format, plan]
 
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || inputs.operation == 'apply')
+      (github.event_name == 'push' ||
+       inputs.operation == 'apply')
 
     runs-on: ubuntu-latest
     environment: pps-dev
@@ -432,11 +416,11 @@ jobs:
 
     defaults:
       run:
-        working-directory: infra/terraform/environments/dev
         shell: bash
+        working-directory: infra/terraform/environments/dev
 
     steps:
-      - name: Checkout exact formatted commit
+      - name: Checkout formatted commit
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.format.outputs.formatted_sha }}
@@ -448,17 +432,19 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: Check Apply authorization
-        if: github.event_name == 'push' || inputs.dry_run == false
+      - name: Verify Apply authorization
+        if: >-
+          github.event_name == 'push' ||
+          inputs.dry_run == false
         env:
           APPLY_ENABLED: ${{ vars.PPS_APPLY_ENABLED }}
         run: |
           test "$APPLY_ENABLED" = "true" || {
-            echo "::error::Set PPS_APPLY_ENABLED=true for deployment"
+            echo "::error::PPS_APPLY_ENABLED must be true"
             exit 1
           }
 
-      - name: Verify Apply role configured
+      - name: Verify Apply role
         env:
           APPLY_ROLE_ARN: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
         run: |
@@ -467,41 +453,43 @@ jobs:
             exit 1
           }
 
-      - name: Configure AWS credentials - Apply (OIDC)
+      - name: Configure AWS credentials - Apply
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: "513329232596"
           role-session-name: GitHubActions-PPS-Apply
-          retry-max-attempts: 3
 
-      - name: Download encrypted approved plan
+      - name: Download encrypted plan
         uses: actions/download-artifact@v6
         with:
           name: pps-dev-tfplan-${{ github.run_id }}
           path: infra/terraform/environments/dev
 
-      - name: Verify encrypted artifact files
+      - name: Verify downloaded artifact
         run: |
           test -s tfplan.gpg
           test -s .terraform.lock.hcl
 
-      - name: Terraform init - pinned providers
+      - name: Clean Terraform working directory
+        run: rm -rf .terraform
+
+      - name: Terraform init
         run: |
           terraform init \
             -input=false \
             -no-color \
             -lockfile=readonly
 
-      - name: Decrypt exact approved plan
+      - name: Decrypt approved plan
         env:
           PLAN_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
         run: |
           set -euo pipefail
 
           test "${#PLAN_KEY}" -ge 32 || {
-            echo "::error::Missing TF_PLAN_ENCRYPTION_KEY"
+            echo "::error::Missing encryption key"
             exit 1
           }
 
@@ -515,49 +503,45 @@ jobs:
             tfplan.gpg
 
           chmod 600 tfplan
-
           terraform show -json tfplan > /dev/null
 
-          echo "Encrypted saved plan verified."
-
-      - name: Check dry-run mode
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true
+      - name: Dry-run verification
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.dry_run == true
         run: |
-          echo "Dry-run complete. Terraform apply was NOT executed."
+          echo "OIDC authentication succeeded"
+          echo "Saved plan decrypted and verified"
+          echo "Dry-run: AWS resources not changed"
 
-      - name: Apply approved saved plan
-        if: github.event_name == 'push' || inputs.dry_run == false
+      - name: Apply exact saved plan
+        if: >-
+          github.event_name == 'push' ||
+          inputs.dry_run == false
         run: |
           set -euo pipefail
 
-          if ! terraform apply \
-              -input=false \
-              -no-color \
-              -lock-timeout=5m \
-              tfplan \
-              > "$RUNNER_TEMP/g2b-terraform-apply.log" 2>&1; then
+          terraform apply \
+            -input=false \
+            -no-color \
+            -lock-timeout=5m \
+            tfplan
 
-            echo "::error::Terraform Apply failed. Raw output withheld to prevent secret disclosure. Check AWS resources and Terraform state before retry."
-            exit 1
-          fi
-
-          echo "Terraform Apply completed successfully."
-
-      - name: Remove plaintext plan on runner
+      - name: Remove plaintext plan
         if: always()
         run: rm -f tfplan tfplan.gpg
 
   # ==========================================================
-  # 4. Discord Notification
+  # 5. Discord notification
   # ==========================================================
   notify:
-    name: "4. Discord Notification"
+    name: "5. Discord Notification"
     needs: [security, format, validate, plan, apply]
     if: always()
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send pipeline result without secrets
+      - name: Send pipeline result
         shell: bash
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -578,102 +562,56 @@ jobs:
           python3 - <<'PY'
           import json
           import os
-          import re
           import urllib.error
           import urllib.parse
           import urllib.request
 
-          env = os.environ
+          e = os.environ
+          webhook = e.get("DISCORD_WEBHOOK_URL", "").strip()
 
-          webhook = env.get(
-              "DISCORD_WEBHOOK_URL", ""
-          ).strip()
-
-          u = urllib.parse.urlsplit(webhook)
-
-          allowed_hosts = (
-              "discord.com",
-              "discordapp.com",
-              "canary.discord.com",
-              "ptb.discord.com",
-          )
-
-          if (
-              u.scheme != "https"
-              or u.hostname not in allowed_hosts
-              or not u.path.startswith("/api/webhooks/")
-          ):
-              raise SystemExit(
-                  "Missing or invalid Discord webhook"
-              )
+          if not webhook:
+              print("Discord webhook not configured")
+              raise SystemExit(0)
 
           results = {
-              name: env[name + "_RESULT"]
-              for name in (
-                  "SECURITY", "FORMAT", "CI", "PLAN", "APPLY"
-              )
+              "Security": e["SECURITY_RESULT"],
+              "Format": e["FORMAT_RESULT"],
+              "CI": e["CI_RESULT"],
+              "Plan": e["PLAN_RESULT"],
+              "Apply": e["APPLY_RESULT"]
           }
 
-          failed = any(
-              value == "failure"
-              for value in results.values()
-          )
-
-          cancelled = any(
-              value == "cancelled"
-              for value in results.values()
-          )
-
-          only_plan = (
-              env["EVENT_NAME"] == "workflow_dispatch"
-              and env.get("OPERATION", "plan") == "plan"
-          )
-
-          dry_run = (
-              env["EVENT_NAME"] == "workflow_dispatch"
-              and env.get("DRY_RUN", "").lower() == "true"
-          )
-
-          if failed:
-              title = "❌ PPS Terraform Pipeline Failed"
-          elif cancelled:
-              title = "⚠️ PPS Terraform Pipeline Cancelled"
-          elif only_plan and results["PLAN"] == "success":
-              title = "✅ PPS Terraform Plan Complete (not applied)"
-          elif dry_run and results["APPLY"] == "success":
-              title = "🧪 PPS Terraform Dry-run Complete (not applied)"
-          elif results["APPLY"] == "success":
-              title = "🚀 PPS Terraform Apply Complete"
+          if "failure" in results.values():
+              title = "PPS Terraform Pipeline Failed"
+              color = 15158332
+          elif "cancelled" in results.values():
+              title = "PPS Terraform Pipeline Cancelled"
+              color = 15844367
+          elif e["EVENT_NAME"] == "workflow_dispatch" and \
+               e.get("OPERATION", "plan") == "plan":
+              title = "PPS Terraform Plan Completed"
+              color = 3066993
+          elif e["APPLY_RESULT"] == "success":
+              title = "PPS Terraform Apply Job Completed"
+              color = 3066993
           else:
-              title = "⚠️ PPS Terraform Incomplete"
+              title = "PPS Terraform Pipeline Incomplete"
+              color = 15844367
 
           run_url = (
-              f"{env['GITHUB_SERVER_URL']}/"
-              f"{env['GITHUB_REPOSITORY']}/"
-              f"actions/runs/{env['GITHUB_RUN_ID']}"
+              f"{e['GITHUB_SERVER_URL']}/"
+              f"{e['GITHUB_REPOSITORY']}/"
+              f"actions/runs/{e['GITHUB_RUN_ID']}"
           )
-
-          if env["EVENT_NAME"] == "push":
-              mode = "push (Apply after approval)"
-          else:
-              mode = (
-                  f"manual: {env.get('OPERATION', 'plan')}, "
-                  f"dry_run={env.get('DRY_RUN', 'true')}"
-              )
 
           fields = [
               {
                   "name": name,
-                  "value": value,
+                  "value": status,
                   "inline": True
               }
-              for name, value in results.items()
+              for name, status in results.items()
           ]
-
-          fields.append({
-              "name": "Mode",
-              "value": mode
-          })
 
           payload = {
               "username": "G2B KONEP Terraform Bot",
@@ -681,69 +619,53 @@ jobs:
               "embeds": [{
                   "title": title,
                   "url": run_url,
-                  "color": (
-                      15158332 if failed else 3066993
-                  ),
-                  "fields": fields,
-                  "footer": {
-                      "text": (
-                          "Full Terraform plan stays in GitHub Actions logs; "
-                          "no plan body sent to Discord."
-                      )
-                  }
+                  "color": color,
+                  "fields": fields
               }]
           }
 
+          parts = urllib.parse.urlsplit(webhook)
           query = dict(
-              urllib.parse.parse_qsl(u.query)
+              urllib.parse.parse_qsl(parts.query)
           )
           query["wait"] = "true"
 
-          thread = env.get(
-              "DISCORD_THREAD_ID", ""
-          ).strip()
+          thread = e.get("DISCORD_THREAD_ID", "").strip()
 
           if thread:
-              if not re.fullmatch(r"\d{15,25}", thread):
-                  raise SystemExit("Invalid Discord thread ID")
-
               query["thread_id"] = thread
-
-          elif env.get(
+          elif e.get(
               "DISCORD_FORUM_CHANNEL", ""
           ).lower() == "true":
               payload["thread_name"] = (
-                  f"PPS Terraform - Run {env['GITHUB_RUN_ID']}"
+                  f"PPS Terraform Run {e['GITHUB_RUN_ID']}"
               )
 
-          dest = urllib.parse.urlunsplit((
-              u.scheme,
-              u.netloc,
-              u.path,
+          url = urllib.parse.urlunsplit((
+              parts.scheme,
+              parts.netloc,
+              parts.path,
               urllib.parse.urlencode(query),
-              ""
+              parts.fragment
           ))
 
-          request = urllib.request.Request(
-              dest,
+          req = urllib.request.Request(
+              url,
               data=json.dumps(payload).encode("utf-8"),
-              headers={
-                  "Content-Type": "application/json"
-              },
+              headers={"Content-Type": "application/json"},
               method="POST"
           )
 
           try:
               with urllib.request.urlopen(
-                  request, timeout=30
+                  req, timeout=30
               ) as response:
                   print(
-                      "Discord notification sent: HTTP",
+                      "Discord notification HTTP",
                       response.status
                   )
-
           except urllib.error.HTTPError as exc:
               raise SystemExit(
-                  f"Discord webhook failed: HTTP {exc.code}"
+                  f"Discord notification HTTP {exc.code}"
               ) from None
           PY

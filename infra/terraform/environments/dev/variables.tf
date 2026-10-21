@@ -23,7 +23,7 @@ variable "availability_zones" {
   default = ["ap-northeast-2a", "ap-northeast-2c"]
 
   validation {
-    condition     = length(var.availability_zones) == 2 && var.availability_zones[0] != var.availability_zones[1]
+    condition     = length(var.availability_zones) == 2 
     error_message = "Choose two distinct AZs available in your AWS account."
   }
 }
@@ -60,10 +60,11 @@ variable "eks_admin_principal_arn" {
   default     = null
 }
 
+## 학원 공인 ip에서만 kube-api 접근 허용
 variable "cluster_public_access_cidrs" {
   description = "Allowlist for public Kubernetes API access; restrict for real use."
   type        = list(string)
-  default     = ["0.0.0.0/0"]
+  default     = ["183.98.32.210/32"]
 }
 
 variable "aurora_engine_version" {

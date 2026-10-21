@@ -15,7 +15,7 @@ variable "environment" {
 
 variable "vpc_cidr" {
   type    = string
-  default = "172.20.0.0/16"
+  default = "172.30.0.0/16"
 }
 
 variable "availability_zones" {

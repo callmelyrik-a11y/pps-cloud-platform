@@ -101,18 +101,22 @@ variable "alb_controller_policy_arn" {
 }
 
 variable "public_domain_name" {
-  description = "Optional actual frontend FQDN in a hosted zone you control."
+  description = "Optional custom domain for local CloudFront"
   type        = string
-  default     = "bo.konep7777.shop"
+  default     = null
 
   validation {
-    condition     = (var.public_domain_name == null) == (var.hosted_zone_id == null)
-    error_message = "Set public_domain_name and hosted_zone_id together, or leave both unset."
+    condition = (
+      (var.public_domain_name == null) ==
+      (var.hosted_zone_id == null)
+    )
+
+    error_message = "Set both values or neither."
   }
 }
 
 variable "hosted_zone_id" {
-  description = "Route 53 PUBLIC hosted zone ID for public_domain_name; supply both or neither."
+  description = "Optional Route53 hosted zone ID"
   type        = string
-  default     = "Z08754611FGFIL4NXLZGN"
+  default     = null
 }

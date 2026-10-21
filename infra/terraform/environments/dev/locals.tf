@@ -2,6 +2,16 @@ locals {
   name         = "${var.project}-${var.environment}"
   cluster_name = "${local.name}-eks"
 
+  g2b_konep_common_tags = {
+    Project     = "g2b-konep"
+    Environment = "dev"
+    ManagedBy   = "Terraform"
+  }
+
+
+
+
+
   # Exact draw.io subnet layout: 2 AZ x Public / App / DB.
   subnets = {
     public_a = { az = var.availability_zones[0], cidr = cidrsubnet(var.vpc_cidr, 8, 1), tier = "public", az_index = 0 }

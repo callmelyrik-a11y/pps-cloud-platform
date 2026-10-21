@@ -103,7 +103,7 @@ variable "alb_controller_policy_arn" {
 variable "public_domain_name" {
   description = "Optional actual frontend FQDN in a hosted zone you control."
   type        = string
-  default     = "govbridge.store"
+  default     = "bo.konep7777.shop"
 
   validation {
     condition     = (var.public_domain_name == null) == (var.hosted_zone_id == null)

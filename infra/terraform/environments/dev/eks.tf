@@ -171,7 +171,7 @@ resource "aws_eks_node_group" "g2b_konep_general_node_group" {
   ]
 
   tags = merge(local.g2b_konep_common_tags, {
-    Name = "${local.g2b_konep_common_}-general-ng"
+    Name = "g2b-konep-dev-general-ng"
   })
 }
 

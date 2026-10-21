@@ -1,3 +1,4 @@
+
 name: Infra CI - Terraform validate
 
 on:
@@ -7,33 +8,71 @@ on:
       - "infra/terraform/**"
       - ".github/workflows/infra-ci.yml"
       - ".github/workflows/infra-deploy.yml"
+      - ".github/workflows/terraform-format.yml"
+
   push:
     branches: [main]
     paths:
       - "infra/terraform/**"
       - ".github/workflows/infra-ci.yml"
+      - ".github/workflows/terraform-format.yml"
+
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    name: Terraform Validate
+  secrets:
+    name: Secret leak scan (Gitleaks)
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan committed secrets
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_ENABLE_SUMMARY: "false"
+
+  validate:
+    name: Terraform format and validate
+    needs: secrets
+    runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: infra/terraform/environments/dev
+        shell: bash
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.10.5"
-      - name: Format check
+          terraform_wrapper: false
+
+      - name: Normalize formatter output in CI workspace
+        run: terraform fmt -recursive -list=false
+
+      - name: Check formatting
         run: terraform fmt -check -recursive
-      - name: Initialize without AWS state access
-        run: terraform init -backend=false -input=false
-      - name: Validate Terraform configuration
+
+      - name: Initialize providers without remote backend
+        run: terraform init -backend=false -input=false -no-color
+
+      - name: Validate Terraform
         run: terraform validate -no-color
+

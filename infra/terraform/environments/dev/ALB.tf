@@ -35,7 +35,7 @@ resource "aws_lb_listener" "g2bkonepALBhttpslistener" {
   port              = 443
   protocol          = "HTTPS"
 
-  certificate_arn = "arn:aws:acm:ap-northeast-2:513329232596:certificate/e94ac631-4acd-4be4-a88b-ca347b1a07ce"
+  certificate_arn = "arn:aws:acm:us-east-1:513329232596:certificate/dedeab73-39dc-41b2-97d9-4ad5b94b2ca7"
 
   default_action {
     type             = "forward"

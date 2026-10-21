@@ -44,6 +44,13 @@ resource "aws_rds_cluster" "g2bkonepDBCluster" {
   skip_final_snapshot    = true
   vpc_security_group_ids = [aws_security_group.g2bkonepDBSecugroup.id]
 
+  deletion_protection = true
+
+  lifecycle {
+    ignore_changes  = [availability_zones]
+    prevent_destroy = true
+  }
+
 }
 
 resource "aws_rds_cluster_instance" "g2bkonepDB1" {
@@ -56,6 +63,9 @@ resource "aws_rds_cluster_instance" "g2bkonepDB1" {
   availability_zone          = "ap-northeast-2a"
   db_subnet_group_name       = aws_db_subnet_group.g2bkonepSubnetgroup.name
   auto_minor_version_upgrade = false
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_rds_cluster_instance" "g2bkonepDB2" {
@@ -68,4 +78,8 @@ resource "aws_rds_cluster_instance" "g2bkonepDB2" {
   availability_zone          = "ap-northeast-2c"
   db_subnet_group_name       = aws_db_subnet_group.g2bkonepSubnetgroup.name
   auto_minor_version_upgrade = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }

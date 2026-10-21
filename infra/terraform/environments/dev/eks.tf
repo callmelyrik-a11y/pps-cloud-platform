@@ -259,3 +259,13 @@ resource "aws_eks_access_policy_association" "g2b_konep_admin" {
     type = "cluster"
   }
 }
+
+resource "aws_autoscaling_group_tag" "g2b_konep_worker_name" {
+  autoscaling_group_name = aws_eks_node_group.g2b_konep_general_node_group.resources[0].autoscaling_groups[0].name
+
+  tag {
+    key                 = "Name"
+    value               = "g2b-konep-dev-eks-worker"
+    propagate_at_launch = true
+  }
+}

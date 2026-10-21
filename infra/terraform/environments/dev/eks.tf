@@ -81,7 +81,7 @@ resource "aws_eks_cluster" "g2b_konep_eks" {
   ]
 
   tags = merge(local.g2b_konep_common_tags, {
-    Name = local.cluser_name
+    Name = local.cluster_name
   })
 }
 

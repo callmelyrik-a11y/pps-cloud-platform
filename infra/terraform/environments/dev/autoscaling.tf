@@ -131,8 +131,13 @@ resource "aws_eks_pod_identity_association" "g2b_konep_cluster_autoscaler" {
 
   namespace       = local.g2b_konep_cluster_autoscaler_namespace
   service_account = local.g2b_konep_cluster_autoscaler_sa
+  role_arn        = aws_iam_role.g2b_konep_cluster_autoscaler_role.arn
 
-  role_arn = aws_iam_role.g2b_konep_cluster_autoscaler_role.arn
+  lifecycle {
+    replace_triggered_by = [
+      aws_eks_cluster.g2b_konep_eks
+    ]
+  }
 
   depends_on = [
     aws_eks_addon.g2b_konep_pod_identity_agent,

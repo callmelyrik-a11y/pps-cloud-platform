@@ -1,6 +1,17 @@
 # 기존 IAM Role 조회
-data "aws_iam_role" "g2b_konep_ec2_s3_read" {
-  name = "g2bkonepEC2S3ReadRole"
+resource "aws_iam_role" "g2b_konep_ec2_s3_read" {
+  name = "g2b-konep-dev-ec2-s3-read-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
 }
 
 # 기존 Role을 담는 Instance Profile 생성

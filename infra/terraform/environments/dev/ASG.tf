@@ -1,19 +1,26 @@
+# 기존 IAM Role 조회
+data "aws_iam_role" "g2b_konep_ec2_s3_read" {
+  name = "g2bkonepEC2S3ReadRole"
+}
+
+# 기존 Role을 담는 Instance Profile 생성
+resource "aws_iam_instance_profile" "g2b_konep_ec2_s3_read" {
+  name = "g2b-konep-dev-ec2-s3-read-profile"
+  role = data.aws_iam_role.g2b_konep_ec2_s3_read.name
+}
 
 resource "aws_launch_template" "g2bkonepLaunchTemplate" {
-  depends_on             = [aws_security_group.g2bkonepSecugroup]
   name_prefix            = "g2bkonepAutoScalingGroup"
   image_id               = data.aws_ami.LatestAmi.id
   key_name               = aws_key_pair.g2b_konep_keypair.key_name
   instance_type          = "t3.micro"
   vpc_security_group_ids = [aws_security_group.g2bkonepSecugroup.id]
 
-
   user_data = filebase64("${path.module}/script.sh")
 
   iam_instance_profile {
-    name = "g2bkonepEC2S3ReadRole"
+    name = aws_iam_instance_profile.g2b_konep_ec2_s3_read.name
   }
-
 }
 
 resource "aws_autoscaling_group" "g2bkonepAutoScalingGroup" {

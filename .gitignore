@@ -27,3 +27,9 @@ node_modules/
 dist/
 coverage/
 .DS_Store
+
+
+# SSH private keys
+infra/terraform/environments/dev/key/tf_keypair
+infra/terraform/environments/dev/key/*.ppk
+infra/terraform/environments/dev/key/*.pem

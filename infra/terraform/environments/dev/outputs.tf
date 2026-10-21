@@ -23,10 +23,10 @@ output "nat_eips" {
 #  value       = aws_iam_role.g2b_konep_cluster_autoscaler_role.arn
 #}
 
-output "g2b_konep_cluster_autoscaler_release" {
-  description = "Helm release name for Cluster Autoscaler"
-  value       = helm_release.g2b_konep_cluster_autoscaler.name
-}
+#output "g2b_konep_cluster_autoscaler_release" {
+#  description = "Helm release name for Cluster Autoscaler"
+#  value       = helm_release.g2b_konep_cluster_autoscaler.name
+#}
 
 output "eks_cluster_name" {
   value = aws_eks_cluster.g2b_konep_eks.name

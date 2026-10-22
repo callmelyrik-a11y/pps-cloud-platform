@@ -159,6 +159,9 @@ jobs:
     needs: [format, validate]
     runs-on: ubuntu-latest
 
+    env:
+      TF_VAR_g2b_konep_db_master_password: ${{ secrets.G2B_KONEP_DB_MASTER_PASSWORD }}
+
     permissions:
       contents: read
       id-token: write
@@ -194,6 +197,11 @@ jobs:
 
           test -n "$TF_VAR_frontend_bucket_name" || {
             echo "::error::Missing frontend bucket variable"
+            exit 1
+          }
+
+          test -n "$TF_VAR_g2b_konep_db_master_password" || {
+            echo "::error::Missing G2B_KONEP_DB_MASTER_PASSWORD"
             exit 1
           }
 

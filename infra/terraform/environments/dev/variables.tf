@@ -8,6 +8,13 @@ variable "project" {
   default = "g2b_konep"
 }
 
+variable "g2b_konep_db_master_password" {
+  description = "Master password for the Aurora MySQL cluster"
+  type        = string
+  sensitive   = true
+  nullable    = false
+}
+
 variable "environment" {
   type    = string
   default = "dev"

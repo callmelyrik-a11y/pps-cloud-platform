@@ -252,7 +252,7 @@ jobs:
           set -euo pipefail
 
           terraform version
-          terraform providers
+          
 
           test -f .terraform.lock.hcl || {
             echo "::error::Missing .terraform.lock.hcl"

@@ -60,8 +60,13 @@ def list_organizations(
 def get_organization(organization_id: int):
     with lock:
         row = organizations.get(organization_id)
+
         if row is None:
-            raise HTTPException(status_code=404, detail="Organization not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Organization not found"
+            )
+
         return row.copy()
 
 
@@ -75,3 +80,17 @@ def create_organization(payload: OrganizationCreate):
         organizations[next_id] = row
         next_id += 1
         return row.copy()
+
+@app.get("/api/test")
+def test_json():
+    return {
+        "success": True,
+        "message": "G2B KONEP API 정상 응답",
+        "service": "organization",
+        "data": {
+            "id": 1,
+            "organization_name": "조달청 본청",
+            "status": "ACTIVE",
+            "environment": "dev"
+        }
+    }

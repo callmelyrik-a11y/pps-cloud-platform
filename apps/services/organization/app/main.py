@@ -42,6 +42,34 @@ class OrganizationList(BaseModel):
 def healthcheck():
     return {"status": "ok", "service": "organization"}
 
+@app.get("/api/organizations/test-json")
+def test_json():
+    return {
+        "success": True,
+        "message": "G2B KONEP Organization API 정상 응답",
+        "service": "organization",
+        "data": {
+            "id": 1,
+            "organization_name": "조달청 본청",
+            "status": "ACTIVE",
+            "environment": "dev"
+        }
+    }
+
+@app.get("/api/test")
+def test_json():
+    return {
+        "success": True,
+        "message": "G2B KONEP API 정상 응답",
+        "service": "organization",
+        "data": {
+            "id": 1,
+            "organization_name": "조달청 본청",
+            "status": "ACTIVE",
+            "environment": "dev"
+        }
+    }
+
 
 @app.get("/api/organizations", response_model=OrganizationList)
 def list_organizations(
@@ -80,31 +108,4 @@ def create_organization(payload: OrganizationCreate):
         organizations[next_id] = row
         next_id += 1
         return row.copy()
-        
-@app.get("/api/organizations/test-json")
-def test_json():
-    return {
-        "success": True,
-        "message": "G2B KONEP Organization API 정상 응답",
-        "service": "organization",
-        "data": {
-            "id": 1,
-            "organization_name": "조달청 본청",
-            "status": "ACTIVE",
-            "environment": "dev"
-        }
-    }
 
-@app.get("/api/test")
-def test_json():
-    return {
-        "success": True,
-        "message": "G2B KONEP API 정상 응답",
-        "service": "organization",
-        "data": {
-            "id": 1,
-            "organization_name": "조달청 본청",
-            "status": "ACTIVE",
-            "environment": "dev"
-        }
-    }

@@ -6,6 +6,8 @@ on:
     workflows:
       - "Infra CI-CD - PPS Dev"
       - "App CD - FastAPI to EKS"
+      - "G2B KONEP - FastAPI Build and ECR Push"
+      - "G2B KONEP - App CD to EKS"
       - "Frontend CD - React to S3 / CloudFront"
     types: [completed]
     branches: [main]
@@ -79,6 +81,8 @@ jobs:
 
           ALLOWED_WORKFLOWS = {
               "Infra CI-CD - PPS Dev",
+              "G2B KONEP - FastAPI Build and ECR Push",
+              "G2B KONEP - App CD to EKS",
               "App CD - FastAPI to EKS",
               "Frontend CD - React to S3 / CloudFront",
           }

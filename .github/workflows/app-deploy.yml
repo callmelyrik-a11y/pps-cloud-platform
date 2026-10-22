@@ -1,55 +1,133 @@
-name: App CD - FastAPI to EKS
+
+name: G2B KONEP - App CD to EKS
 
 on:
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "ECR image tag (sha-<full commit SHA>)"
+        required: true
+        type: string
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
-  group: pps-dev-app-deploy
+  group: g2b-konep-dev-app-deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main' && vars.PPS_APP_DEPLOY_ENABLED == 'true'
+    name: Deploy FastAPI to EKS
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: pps-dev
+
+    environment: g2b-konep-dev
+
+    permissions:
+      contents: read
+      id-token: write
+
     env:
       AWS_REGION: ap-northeast-2
       AWS_ACCOUNT_ID: "513329232596"
-      EKS_CLUSTER_NAME: pps-dev-eks
+      EKS_CLUSTER_NAME: g2b-konep-dev-eks
+      K8S_NAMESPACE: g2b-konep-dev
+      IMAGE_TAG: ${{ inputs.image_tag }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate image tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ ]] || {
+            echo "Invalid image tag: $IMAGE_TAG"
+            exit 1
+          }
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: arn:aws:iam::513329232596:role/githubactions-terraformrole
-          aws-region: ap-northeast-2
-      - name: Configure ECR and push immutable images
+          role-to-assume: ${{ vars.G2B_KONEP_EKS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: G2BKonepEKSDeploy
+
+      - name: Verify AWS account
         shell: bash
         run: |
           set -euo pipefail
-          test "$(aws sts get-caller-identity --query Account --output text)" = "$AWS_ACCOUNT_ID"
-          REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
-          TAG="${GITHUB_SHA:0:12}"
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          test "$ACCOUNT" = "$AWS_ACCOUNT_ID"
+
+      - name: Verify ECR images
+        shell: bash
+        run: |
+          set -euo pipefail
           for SERVICE in organization notice; do
-            IMAGE="$REGISTRY/pps-dev-$SERVICE:$TAG"
-            docker build -t "$IMAGE" "apps/services/$SERVICE"
-            docker push "$IMAGE"
-            if [[ "$SERVICE" == 'organization' ]]; then echo "ORG_IMAGE=$IMAGE" >> "$GITHUB_ENV"; fi
-            if [[ "$SERVICE" == 'notice' ]]; then echo "NOTICE_IMAGE=$IMAGE" >> "$GITHUB_ENV"; fi
+            aws ecr describe-images \
+              --region "$AWS_REGION" \
+              --repository-name "g2b-konep-dev-$SERVICE" \
+              --image-ids "imageTag=$IMAGE_TAG"
           done
-      - name: Configure kubectl for EKS
-        run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
-      - name: Deploy services
+
+      - name: Configure kubectl
+        shell: bash
+        run: |
+          aws eks update-kubeconfig \
+            --region "$AWS_REGION" \
+            --name "$EKS_CLUSTER_NAME"
+
+      - name: Verify cluster access
+        shell: bash
+        run: |
+          kubectl auth can-i get deployments \
+            --namespace "$K8S_NAMESPACE"
+          kubectl auth can-i patch deployments \
+            --namespace "$K8S_NAMESPACE"
+
+      - name: Deploy FastAPI services
         shell: bash
         run: |
           set -euo pipefail
-          kubectl apply -f infra/kubernetes/namespace.yaml
-          sed "s|__IMAGE__|${ORG_IMAGE}|g" infra/kubernetes/organization.yaml | kubectl apply -f -
-          sed "s|__IMAGE__|${NOTICE_IMAGE}|g" infra/kubernetes/notice.yaml | kubectl apply -f -
-          kubectl -n pps-dev rollout status deployment/organization --timeout=300s
-          kubectl -n pps-dev rollout status deployment/notice --timeout=300s
+
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          ORG_IMAGE="${REGISTRY}/g2b_konep-dev-organization:${IMAGE_TAG}"
+          NOTICE_IMAGE="${REGISTRY}/g2b_konep-dev-notice:${IMAGE_TAG}"
+
+          # Namespace must already exist.
+          kubectl get namespace "$K8S_NAMESPACE"
+
+          sed \
+            -e 's/namespace: pps-dev/namespace: g2b-konep-dev/g' \
+            -e "s|__IMAGE__|${ORG_IMAGE}|g" \
+            infra/kubernetes/organization.yaml \
+            | kubectl apply -n "$K8S_NAMESPACE" -f -
+
+          sed \
+            -e 's/namespace: pps-dev/namespace: g2b-konep-dev/g' \
+            -e "s|__IMAGE__|${NOTICE_IMAGE}|g" \
+            infra/kubernetes/notice.yaml \
+            | kubectl apply -n "$K8S_NAMESPACE" -f -
+
+      - name: Wait for rollout
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kubectl -n "$K8S_NAMESPACE" rollout status \
+            deployment/organization --timeout=300s
+
+          kubectl -n "$K8S_NAMESPACE" rollout status \
+            deployment/notice --timeout=300s
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          echo "## G2B KONEP App Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "Cluster: $EKS_CLUSTER_NAME" >> "$GITHUB_STEP_SUMMARY"
+          echo "Namespace: $K8S_NAMESPACE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image tag: $IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"

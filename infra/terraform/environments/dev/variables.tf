@@ -128,26 +128,3 @@ variable "hosted_zone_id" {
   default     = null
 }
 
-# ============================================================
-# G2B KONEP - VPC Peering Additional Variables
-# ============================================================
-
-variable "g2b_konep_branch_vpc_id" {
-  type = string
-}
-
-variable "g2b_konep_branch_vpc_cidr" {
-  type = string
-}
-
-variable "g2b_konep_branch_ec2_route_table_ids" {
-  type = set(string)
-}
-
-variable "g2b_konep_shared_alb_route_table_ids" {
-  type = set(string)
-}
-
-variable "g2b_konep_internal_alb_sg_id" {
-  type = string
-}

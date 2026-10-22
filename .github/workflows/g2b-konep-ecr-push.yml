@@ -1,0 +1,128 @@
+
+name: G2B KONEP - FastAPI Build and ECR Push
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/services/**"
+      - ".github/workflows/g2b-konep-ecr-push.yml"
+
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/services/**"
+      - ".github/workflows/g2b-konep-ecr-push.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g2b-konep-ecr-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  AWS_ACCOUNT_ID: "513329232596"
+
+jobs:
+  build:
+    name: Build - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - organization
+          - notice
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Dockerfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "apps/services/${{ matrix.service }}/Dockerfile"
+          test -f "apps/services/${{ matrix.service }}/requirements.txt"
+
+      - name: Set image metadata
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPOSITORY="g2b_konep-dev-${{ matrix.service }}"
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          TAG="sha-${GITHUB_SHA}"
+
+          echo "repository=${REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "uri=${REGISTRY}/${REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for validation
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/services/${{ matrix.service }}
+          file: ./apps/services/${{ matrix.service }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: g2b-konep-dev-${{ matrix.service }}:ci
+
+      - name: Configure AWS credentials
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.G2B_KONEP_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: G2BKonepECRPush
+
+      - name: Verify AWS account
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          test "$ACCOUNT" = "$AWS_ACCOUNT_ID"
+
+      - name: Verify ECR repository
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          aws ecr describe-repositories \
+            --region "$AWS_REGION" \
+            --repository-names "${{ steps.image.outputs.repository }}"
+
+      - name: Login to Amazon ECR
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push to ECR
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/services/${{ matrix.service }}
+          file: ./apps/services/${{ matrix.service }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.uri }}:${{ steps.image.outputs.tag }}
+          provenance: false
+
+      - name: Publish image URI
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          echo "### ECR image" >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ steps.image.outputs.uri }}:${{ steps.image.outputs.tag }}' >> "$GITHUB_STEP_SUMMARY"

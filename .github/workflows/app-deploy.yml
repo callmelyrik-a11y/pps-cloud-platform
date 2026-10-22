@@ -2,10 +2,16 @@
 name: G2B KONEP - App CD to EKS
 
 on:
+  workflow_run:
+    workflows:
+      - "G2B KONEP - FastAPI Build and ECR Push"
+    types: [completed]
+    branches: [main]
+
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "ECR image tag (sha-<full commit SHA>)"
+        description: "ECR image tag (sha-<40 character SHA>)"
         required: true
         type: string
 
@@ -18,10 +24,17 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy FastAPI to EKS
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    name: Deploy FastAPI
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch'))
 
+    runs-on: ubuntu-latest
     environment: g2b-konep-dev
 
     permissions:
@@ -33,101 +46,114 @@ jobs:
       AWS_ACCOUNT_ID: "513329232596"
       EKS_CLUSTER_NAME: g2b-konep-dev-eks
       K8S_NAMESPACE: g2b-konep-dev
-      IMAGE_TAG: ${{ inputs.image_tag }}
 
     steps:
-      - name: Checkout
+      - name: Checkout deployment manifests
         uses: actions/checkout@v4
 
-      - name: Validate image tag
+      - name: Resolve image tag
+        id: image
         shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
-          [[ "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ ]] || {
-            echo "Invalid image tag: $IMAGE_TAG"
-            exit 1
-          }
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            TAG="sha-${SOURCE_SHA}"
+          else
+            TAG="$MANUAL_TAG"
+          fi
+
+          [[ "$TAG" =~ ^sha-[0-9a-f]{40}$ ]] || exit 1
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.G2B_KONEP_EKS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ap-northeast-2
           role-session-name: G2BKonepEKSDeploy
 
       - name: Verify AWS account
         shell: bash
         run: |
           set -euo pipefail
-          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          ACCOUNT=$(aws sts get-caller-identity \
+            --query Account --output text)
           test "$ACCOUNT" = "$AWS_ACCOUNT_ID"
 
       - name: Verify ECR images
         shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
         run: |
           set -euo pipefail
+
           for SERVICE in organization notice; do
             aws ecr describe-images \
               --region "$AWS_REGION" \
-              --repository-name "g2b-konep-dev-$SERVICE" \
-              --image-ids "imageTag=$IMAGE_TAG"
+              --repository-name "g2b_konep-dev-$SERVICE" \
+              --image-ids "imageTag=$IMAGE_TAG" \
+              > /dev/null
           done
 
       - name: Configure kubectl
         shell: bash
         run: |
           aws eks update-kubeconfig \
-            --region "$AWS_REGION" \
-            --name "$EKS_CLUSTER_NAME"
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION"
 
-      - name: Verify cluster access
+      - name: Deploy to EKS
         shell: bash
-        run: |
-          kubectl auth can-i get deployments \
-            --namespace "$K8S_NAMESPACE"
-          kubectl auth can-i patch deployments \
-            --namespace "$K8S_NAMESPACE"
-
-      - name: Deploy FastAPI services
-        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
         run: |
           set -euo pipefail
 
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-          ORG_IMAGE="${REGISTRY}/g2b_konep-dev-organization:${IMAGE_TAG}"
-          NOTICE_IMAGE="${REGISTRY}/g2b_konep-dev-notice:${IMAGE_TAG}"
-
-          # Namespace must already exist.
           kubectl get namespace "$K8S_NAMESPACE"
 
-          sed \
-            -e 's/namespace: pps-dev/namespace: g2b-konep-dev/g' \
-            -e "s|__IMAGE__|${ORG_IMAGE}|g" \
-            infra/kubernetes/organization.yaml \
-            | kubectl apply -n "$K8S_NAMESPACE" -f -
+          for SERVICE in organization notice; do
+            IMAGE="${REGISTRY}/g2b_konep-dev-${SERVICE}:${IMAGE_TAG}"
 
-          sed \
-            -e 's/namespace: pps-dev/namespace: g2b-konep-dev/g' \
-            -e "s|__IMAGE__|${NOTICE_IMAGE}|g" \
-            infra/kubernetes/notice.yaml \
-            | kubectl apply -n "$K8S_NAMESPACE" -f -
+            sed \
+              -e "s/namespace: pps-dev/namespace: ${K8S_NAMESPACE}/g" \
+              -e "s|__IMAGE__|${IMAGE}|g" \
+              "infra/kubernetes/${SERVICE}.yaml" \
+              | kubectl apply -n "$K8S_NAMESPACE" -f -
+          done
 
-      - name: Wait for rollout
+      - name: Verify rollout
         shell: bash
         run: |
           set -euo pipefail
 
-          kubectl -n "$K8S_NAMESPACE" rollout status \
-            deployment/organization --timeout=300s
+          for SERVICE in organization notice; do
+            kubectl rollout status \
+              "deployment/$SERVICE" \
+              -n "$K8S_NAMESPACE" \
+              --timeout=300s
+          done
 
-          kubectl -n "$K8S_NAMESPACE" rollout status \
-            deployment/notice --timeout=300s
+          kubectl get deployments,pods,services \
+            -n "$K8S_NAMESPACE"
 
       - name: Deployment summary
+        if: always()
         shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          JOB_STATUS: ${{ job.status }}
         run: |
-          echo "## G2B KONEP App Deployment" >> "$GITHUB_STEP_SUMMARY"
-          echo "Cluster: $EKS_CLUSTER_NAME" >> "$GITHUB_STEP_SUMMARY"
-          echo "Namespace: $K8S_NAMESPACE" >> "$GITHUB_STEP_SUMMARY"
-          echo "Image tag: $IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## G2B KONEP EKS Deployment"
+            echo "- Status: $JOB_STATUS"
+            echo "- Cluster: $EKS_CLUSTER_NAME"
+            echo "- Namespace: $K8S_NAMESPACE"
+            echo "- Image: $IMAGE_TAG"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,8 +1,9 @@
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: notice
-  namespace: pps-dev
+  namespace: g2b-konep-dev
 spec:
   replicas: 2
   selector:
@@ -16,8 +17,15 @@ spec:
       containers:
         - name: notice
           image: __IMAGE__
+
           ports:
             - containerPort: 8000
+
+          # Organization Service 내부 호출
+          env:
+            - name: ORGANIZATION_SERVICE_URL
+              value: "http://organization.g2b-konep-dev.svc.cluster.local"
+
           resources:
             requests:
               cpu: 100m
@@ -25,36 +33,40 @@ spec:
             limits:
               cpu: 500m
               memory: 384Mi
+
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8000
             initialDelaySeconds: 3
             periodSeconds: 5
+
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 10
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: notice
-  namespace: pps-dev
+  namespace: g2b-konep-dev
 spec:
   selector:
     app: notice
   ports:
     - port: 80
       targetPort: 8000
+
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: notice
-  namespace: pps-dev
+  namespace: g2b-konep-dev
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

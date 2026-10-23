@@ -10,5 +10,11 @@ def test_healthz():
 
 def test_initial_list():
     result = client.get("/api/organizations")
+
     assert result.status_code == 200
-    assert result.json() == []
+    assert result.json() == {
+        "items": [],
+        "total": 0,
+        "limit": 20,
+        "offset": 0,
+    }

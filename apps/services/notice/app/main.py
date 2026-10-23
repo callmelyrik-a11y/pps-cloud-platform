@@ -20,6 +20,10 @@ notices: dict[int, dict] = {}
 audit_logs: list[dict] = []
 next_id = 1
 
+@app.get("/health", include_in_schema=False)
+def health():
+    return {"status": "ok"}
+
 
 class NoticeStatus(str, Enum):
     DRAFT = "DRAFT"

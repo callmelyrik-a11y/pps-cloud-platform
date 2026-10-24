@@ -1,20 +1,42 @@
-# DO NOT DEPLOY AS-IS on a public internet-facing ALB.
-# Before deploying, configure TLS ACM ARN, HTTPS listener and access/WAF rules.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
+
 metadata:
-  name: pps-api
-  namespace: pps-dev
+  name: g2b-konep-dev-api
+  namespace: g2b-konep-dev
+
   annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
+    kubernetes.io/ingress.class: alb
+
+    alb.ingress.kubernetes.io/scheme: internal
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:ACCOUNT_ID:certificate/UUID
+
+    alb.ingress.kubernetes.io/load-balancer-name: g2b-konep-dev-internal-alb
+
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/success-codes: "200"
+
 spec:
   ingressClassName: alb
+
   rules:
     - http:
         paths:
+
+          # Notice API
+          - path: /api/notices
+            pathType: Prefix
+            backend:
+              service:
+                name: notice
+                port:
+                  number: 80
+
+          # Organization API
           - path: /api/organizations
             pathType: Prefix
             backend:
@@ -22,10 +44,12 @@ spec:
                 name: organization
                 port:
                   number: 80
-          - path: /api/notices
-            pathType: Prefix
+
+          # Organization Test API
+          - path: /api/test
+            pathType: Exact
             backend:
               service:
-                name: notice
+                name: organization
                 port:
                   number: 80

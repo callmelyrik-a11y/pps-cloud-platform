@@ -48,7 +48,7 @@ resource "aws_rds_cluster" "g2bkonepDBCluster" {
 
   lifecycle {
     ignore_changes  = [availability_zones]
-    prevent_destroy = true
+    prevent_destroy = false
   }
 
 }
@@ -64,7 +64,7 @@ resource "aws_rds_cluster_instance" "g2bkonepDB1" {
   db_subnet_group_name       = aws_db_subnet_group.g2bkonepSubnetgroup.name
   auto_minor_version_upgrade = false
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
@@ -80,6 +80,6 @@ resource "aws_rds_cluster_instance" "g2bkonepDB2" {
   auto_minor_version_upgrade = false
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }

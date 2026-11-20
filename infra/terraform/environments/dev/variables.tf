@@ -128,3 +128,9 @@ variable "hosted_zone_id" {
   default     = null
 }
 
+variable "ec2_root_password_hash" {
+  description = "Amazon Linux 2 root password hash for console login"
+  type        = string
+  sensitive   = true
+  nullable    = false
+}

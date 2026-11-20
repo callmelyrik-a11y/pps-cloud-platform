@@ -1,18 +1,15 @@
+
 #!/bin/bash
 
 hostnamectl --static set-hostname MyWeb
 
-# GitHub Secret → GitHub Actions → Terraform → User Data
-# root 계정의 비밀번호 해시 설정
+# EC2 root 비밀번호 설정
 usermod --password '${ec2_root_password_hash}' root
 
-# Serial Console용 비밀번호만 설정
-# SSH 비밀번호 인증과 root SSH 로그인은 활성화하지 않음
-
-# Apache, MariaDB, PHP 설치
+# Apache, MariaDB, PHP 및 AWS CLI 설치
 yum install -y httpd mariadb-server mariadb
 yum install -y php php-mysqlnd php-gd
-yum install -y wget unzip
+yum install -y wget unzip awscli
 
 systemctl enable --now mariadb httpd
 
@@ -21,23 +18,52 @@ echo -e "\n\ntoor1234.\ntoor1234.\ny\nn\ny\ny\n" \
   | /usr/bin/mysql_secure_installation
 
 mysql -uroot -ptoor1234. -e \
-  "CREATE USER 'bwapp'@'localhost' IDENTIFIED BY 'bug';
+  "CREATE DATABASE IF NOT EXISTS bWAPP;
+   CREATE USER IF NOT EXISTS 'bwapp'@'localhost'
+   IDENTIFIED BY 'bug';
    GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp'@'localhost';
    FLUSH PRIVILEGES;"
 
 # bWAPP 다운로드 및 배치
-wget https://github.com/ncs10322/aws/raw/main/bWAPP.zip
-unzip bWAPP.zip
-mv bWAPP/* /var/www/html/
+wget -O /tmp/bWAPP.zip \
+  https://github.com/ncs10322/aws/raw/main/bWAPP.zip
 
+unzip -o /tmp/bWAPP.zip -d /tmp/bwapp-install
+
+cp -a /tmp/bwapp-install/bWAPP/. /var/www/html/
+
+# ============================================
+# S3에서 조달청 main.php 가져오기
+# ============================================
+
+aws s3 cp \
+  s3://g2b-konep-513329232596-ap-northeast-2-an/main.php \
+  /var/www/html/main.php
+
+# main.php를 기본 페이지로 지정
+cat > /etc/httpd/conf.d/00-main-page.conf <<'EOF'
+DirectoryIndex main.php index.php index.html
+EOF
+
+# 권한 설정
 chown -R apache:apache /var/www/html
 chmod -R 755 /var/www/html
 
-chmod 777 /var/www/html/passwords \
-  /var/www/html/images \
-  /var/www/html/documents
+# bWAPP 실습 디렉터리 권한
+for dir in passwords images documents; do
+  if [ -d "/var/www/html/$dir" ]; then
+    chmod 777 "/var/www/html/$dir"
+  fi
+done
 
-sed -i 's/\$db_username = "root"/\$db_username = "bwapp"/g' \
+# bWAPP DB 계정 설정
+sed -i \
+  's/\$db_username = "root"/\$db_username = "bwapp"/g' \
   /var/www/html/admin/settings.php
 
+# PHP 문법 및 Apache 설정 확인
+php -l /var/www/html/main.php
+httpd -t
+
+# Apache 재시작
 systemctl restart httpd

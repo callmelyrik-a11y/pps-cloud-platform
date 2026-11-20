@@ -104,8 +104,8 @@ resource "aws_autoscaling_group" "g2bkonepAutoScalingGroup" {
     preferences {
       min_healthy_percentage = 100
       max_healthy_percentage = 125
-      instance_warmup         = 300
-      skip_matching           = true
+      instance_warmup        = 300
+      skip_matching          = true
     }
   }
 

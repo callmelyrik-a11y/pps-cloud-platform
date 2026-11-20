@@ -331,16 +331,6 @@ resource "aws_security_group" "g2bkonepSecugroup" {
     cidr_blocks = ["172.20.0.0/16"]
   }
 
-  # SSH from Bastion Security Group
-  ingress {
-    from_port = 22
-    to_port   = 22
-    protocol  = "tcp"
-
-    security_groups = [
-      aws_security_group.g2bkonepBastionSG.id
-    ]
-  }
 
   # Outbound
   egress {

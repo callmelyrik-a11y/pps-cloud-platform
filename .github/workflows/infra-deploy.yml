@@ -542,29 +542,35 @@ jobs:
   # ==========================================================
   # 5. Discord notification
   # ==========================================================
-  notify:
-    name: "5. Discord Notification"
-    needs: [security, format, validate, plan, apply]
-    if: always()
-    runs-on: ubuntu-latest
+notify:
+  name: "5. Discord Notification"
+  needs: [security, format, validate, plan, apply]
+  if: always()
+  runs-on: ubuntu-latest
 
-    steps:
-      - name: Send pipeline result
-        shell: bash
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_THREAD_ID: ${{ vars.DISCORD_THREAD_ID }}
-          DISCORD_FORUM_CHANNEL: ${{ vars.DISCORD_FORUM_CHANNEL }}
+  steps:
+    - name: Send pipeline result
+      shell: bash
+      continue-on-error: true
+      timeout-minutes: 1
 
-          SECURITY_RESULT: ${{ needs.security.result }}
-          FORMAT_RESULT: ${{ needs.format.result }}
-          CI_RESULT: ${{ needs.validate.result }}
-          PLAN_RESULT: ${{ needs.plan.result }}
-          APPLY_RESULT: ${{ needs.apply.result }}
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        DISCORD_THREAD_ID: ${{ vars.DISCORD_THREAD_ID }}
+        DISCORD_FORUM_CHANNEL: ${{ vars.DISCORD_FORUM_CHANNEL }}
 
-          EVENT_NAME: ${{ github.event_name }}
-          OPERATION: ${{ inputs.operation }}
-          DRY_RUN: ${{ inputs.dry_run }}
+        SECURITY_RESULT: ${{ needs.security.result }}
+        FORMAT_RESULT: ${{ needs.format.result }}
+        CI_RESULT: ${{ needs.validate.result }}
+        PLAN_RESULT: ${{ needs.plan.result }}
+        APPLY_RESULT: ${{ needs.apply.result }}
+
+        EVENT_NAME: ${{ github.event_name }}
+        OPERATION: ${{ inputs.operation }}
+        DRY_RUN: ${{ inputs.dry_run }}
+
+      run: |
+        # 기존 Python Discord 전송 코드를 여기에 유지
 
         run: |
           python3 - <<'PY'
@@ -672,8 +678,14 @@ jobs:
                       "Discord notification HTTP",
                       response.status
                   )
+
           except urllib.error.HTTPError as exc:
-              raise SystemExit(
-                  f"Discord notification HTTP {exc.code}"
-              ) from None
+          print(f"::warning::Discord HTTP {exc.code}")
+
+          except urllib.error.URLError as exc:
+          print(f"::warning::Discord connection error: {exc.reason}")
+
+          except TimeoutError:
+          print("::warning::Discord request timed out")
+              
           PY

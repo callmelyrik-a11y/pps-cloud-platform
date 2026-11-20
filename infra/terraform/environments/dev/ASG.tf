@@ -57,6 +57,18 @@ resource "aws_autoscaling_group" "g2bkonepAutoScalingGroup" {
     id      = aws_launch_template.g2bkonepLaunchTemplate.id
     version = aws_launch_template.g2bkonepLaunchTemplate.latest_version
   }
+  
+  # Launch Template 변경 시 기존 EC2 순차 교체
+  instance_refresh {
+    strategy = "Rolling"
+
+    preferences {
+      min_healthy_percentage = 100
+      max_healthy_percentage = 125
+      instance_warmup         = 300
+      skip_matching           = true
+    }
+  }
 
   tag {
     key                 = "Name"

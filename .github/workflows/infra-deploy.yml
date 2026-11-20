@@ -161,7 +161,7 @@ jobs:
 
     env:
       TF_VAR_g2b_konep_db_master_password: ${{ secrets.G2B_KONEP_DB_MASTER_PASSWORD }}
-
+      TF_VAR_ec2_root_password_hash: ${{ secrets.EC2_ROOT_PASSWORD_HASH }}
     permissions:
       contents: read
       id-token: write

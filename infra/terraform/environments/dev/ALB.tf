@@ -55,21 +55,6 @@ resource "aws_lb" "g2bkonepALB" {
   }
 }
 
-# ============================================================
-# 3. HTTP Listener - Port 80
-# ============================================================
-
-#esource "aws_lb_listener" "g2bkonepALBhttplistener" {
-#  load_balancer_arn = aws_lb.g2bkonepALB.arn
-#
-#  port     = 80
-#  protocol = "HTTP"
-
-# default_action {
-#    type             = "forward"
-#    target_group_arn = aws_lb_target_group.g2bkonepALBtargetgroup.arn
-#  }
-#}
 
 # ============================================================
 # 4. ALB DNS Output

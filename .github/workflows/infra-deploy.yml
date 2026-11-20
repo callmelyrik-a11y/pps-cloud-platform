@@ -542,17 +542,17 @@ jobs:
   # ==========================================================
   # 5. Discord notification
   # ==========================================================
-notify:
-  name: "5. Discord Notification"
-  needs: [security, format, validate, plan, apply]
-  if: always()
-  runs-on: ubuntu-latest
-
-  steps:
-    - name: Send pipeline result
-      shell: bash
-      continue-on-error: true
-      timeout-minutes: 1
+  notify:
+    name: "5. Discord Notification"
+    needs: [security, format, validate, plan, apply]
+    if: always()
+    runs-on: ubuntu-latest
+  
+    steps:
+      - name: Send pipeline result
+        shell: bash
+        continue-on-error: true
+        timeout-minutes: 1
 
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

@@ -33,11 +33,11 @@ resource "aws_launch_template" "g2bkonepLaunchTemplate" {
   instance_type          = "t3.micro"
   vpc_security_group_ids = [aws_security_group.g2bkonepSecugroup.id]
 
-user_data = base64encode(
-  templatefile("${path.module}/script.sh.tftpl", {
-    ec2_root_password_hash = var.ec2_root_password_hash
-  })
-)
+  user_data = base64encode(
+    templatefile("${path.module}/script.sh.tftpl", {
+      ec2_root_password_hash = var.ec2_root_password_hash
+    })
+  )
 
   iam_instance_profile {
     name = aws_iam_instance_profile.g2b_konep_ec2_s3_read.name

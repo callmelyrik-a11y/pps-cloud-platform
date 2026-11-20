@@ -542,35 +542,36 @@ jobs:
   # ==========================================================
   # 5. Discord notification
   # ==========================================================
+  
+  # ==========================================================
+  # 5. Discord notification
+  # ==========================================================
   notify:
     name: "5. Discord Notification"
     needs: [security, format, validate, plan, apply]
     if: always()
     runs-on: ubuntu-latest
-  
+
     steps:
       - name: Send pipeline result
         shell: bash
         continue-on-error: true
         timeout-minutes: 1
 
-      env:
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        DISCORD_THREAD_ID: ${{ vars.DISCORD_THREAD_ID }}
-        DISCORD_FORUM_CHANNEL: ${{ vars.DISCORD_FORUM_CHANNEL }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_THREAD_ID: ${{ vars.DISCORD_THREAD_ID }}
+          DISCORD_FORUM_CHANNEL: ${{ vars.DISCORD_FORUM_CHANNEL }}
 
-        SECURITY_RESULT: ${{ needs.security.result }}
-        FORMAT_RESULT: ${{ needs.format.result }}
-        CI_RESULT: ${{ needs.validate.result }}
-        PLAN_RESULT: ${{ needs.plan.result }}
-        APPLY_RESULT: ${{ needs.apply.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          FORMAT_RESULT: ${{ needs.format.result }}
+          CI_RESULT: ${{ needs.validate.result }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          APPLY_RESULT: ${{ needs.apply.result }}
 
-        EVENT_NAME: ${{ github.event_name }}
-        OPERATION: ${{ inputs.operation }}
-        DRY_RUN: ${{ inputs.dry_run }}
-
-      run: |
-        # 기존 Python Discord 전송 코드를 여기에 유지
+          EVENT_NAME: ${{ github.event_name }}
+          OPERATION: ${{ inputs.operation }}
+          DRY_RUN: ${{ inputs.dry_run }}
 
         run: |
           python3 - <<'PY'
@@ -584,15 +585,15 @@ jobs:
           webhook = e.get("DISCORD_WEBHOOK_URL", "").strip()
 
           if not webhook:
-              print("Discord webhook not configured")
+              print("::warning::Discord webhook not configured")
               raise SystemExit(0)
 
           results = {
-              "Security": e["SECURITY_RESULT"],
-              "Format": e["FORMAT_RESULT"],
-              "CI": e["CI_RESULT"],
-              "Plan": e["PLAN_RESULT"],
-              "Apply": e["APPLY_RESULT"]
+              "Security": e.get("SECURITY_RESULT", "unknown"),
+              "Format": e.get("FORMAT_RESULT", "unknown"),
+              "CI": e.get("CI_RESULT", "unknown"),
+              "Plan": e.get("PLAN_RESULT", "unknown"),
+              "Apply": e.get("APPLY_RESULT", "unknown")
           }
 
           if "failure" in results.values():
@@ -601,11 +602,13 @@ jobs:
           elif "cancelled" in results.values():
               title = "PPS Terraform Pipeline Cancelled"
               color = 15844367
-          elif e["EVENT_NAME"] == "workflow_dispatch" and \
-               e.get("OPERATION", "plan") == "plan":
+          elif (
+              e.get("EVENT_NAME") == "workflow_dispatch"
+              and e.get("OPERATION", "plan") == "plan"
+          ):
               title = "PPS Terraform Plan Completed"
               color = 3066993
-          elif e["APPLY_RESULT"] == "success":
+          elif e.get("APPLY_RESULT") == "success":
               title = "PPS Terraform Apply Job Completed"
               color = 3066993
           else:
@@ -639,6 +642,11 @@ jobs:
           }
 
           parts = urllib.parse.urlsplit(webhook)
+
+          if parts.scheme != "https":
+              print("::warning::Discord webhook must use HTTPS")
+              raise SystemExit(0)
+
           query = dict(
               urllib.parse.parse_qsl(parts.query)
           )
@@ -672,7 +680,7 @@ jobs:
 
           try:
               with urllib.request.urlopen(
-                  req, timeout=30
+                  req, timeout=15
               ) as response:
                   print(
                       "Discord notification HTTP",
@@ -680,12 +688,23 @@ jobs:
                   )
 
           except urllib.error.HTTPError as exc:
-          print(f"::warning::Discord HTTP {exc.code}")
+              print(
+                  f"::warning::Discord HTTP {exc.code}"
+              )
 
           except urllib.error.URLError as exc:
-          print(f"::warning::Discord connection error: {exc.reason}")
+              print(
+                  f"::warning::Discord connection error: {exc.reason}"
+              )
 
           except TimeoutError:
-          print("::warning::Discord request timed out")
-              
+              print(
+                  "::warning::Discord request timed out"
+              )
+
+          except Exception as exc:
+              print(
+                  f"::warning::Discord notification error: {type(exc).__name__}"
+              )
+
           PY

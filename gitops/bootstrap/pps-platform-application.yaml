@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pps-platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/callmelyrik-a11y/pps-cloud-platform.git
+    targetRevision: main
+    path: gitops/apps/pps-platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pps-platform
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

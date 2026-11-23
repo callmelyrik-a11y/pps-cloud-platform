@@ -1,0 +1,66 @@
+name: Argo CD GitOps - PPS EKS
+on:
+  push:
+    branches: [main, feature/argocd-gitops-bootstrap]
+    paths:
+      - 'gitops/**'
+      - '.github/workflows/argocd-gitops.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Install Argo CD and apply root Application (main only)'
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate YAML structure
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import pathlib, yaml
+          files=list(pathlib.Path("gitops").rglob("*.yaml"))
+          assert files, "No GitOps YAML found"
+          for path in files:
+              for doc in yaml.safe_load_all(path.read_text()):
+                  assert isinstance(doc,dict) and doc.get("apiVersion") and doc.get("kind") and doc.get("metadata",{}).get("name"),path
+              print(f"PASS {path}")
+          PY
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy == true
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: pps-dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_EKS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-2
+          allowed-account-ids: '513329232596'
+      - name: Configure EKS kubeconfig
+        run: aws eks update-kubeconfig --name g2b-konep-dev-eks --region ap-northeast-2
+      - name: Verify Kubernetes access
+        run: kubectl auth can-i create deployments --namespace argocd && kubectl get nodes
+      - name: Install Argo CD
+        run: |
+          kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.14.20/manifests/install.yaml
+          kubectl rollout status deployment/argocd-server -n argocd --timeout=600s
+          kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=600s
+          kubectl rollout status deployment/argocd-application-controller -n argocd --timeout=600s || true
+      - name: Apply PPS GitOps root Application
+        run: |
+          kubectl apply -f gitops/bootstrap/pps-platform-application.yaml
+          kubectl get applications.argoproj.io -n argocd pps-platform -o wide
+          kubectl get pods -n argocd -o wide
+          kubectl get namespace pps-platform --ignore-not-found

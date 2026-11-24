@@ -1,0 +1,2 @@
+# EKS deployment preparation
+Inspect existing manifests and Terraform outputs. Prepare app-only manifests offline; no new ALB or cloud resources without approval. Use existing ingress only after verification. No public mutation API until authorization. Document ECR digest, secrets references, rollout and rollback; AWS is currently down.

@@ -1,10 +1,17 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param([string]$Region='ap-northeast-2',[string]$Profile,[string]$VpcId,[switch]$AllRegions,[switch]$CheckTerraform,[string]$TerraformDir=(Join-Path $PSScriptRoot '../../infra/terraform/environments/dev'))
+param([string]$Region='ap-northeast-2',[string]$Profile,[string]$VpcId,[switch]$AllRegions,[switch]$CheckTerraform,[string]$TerraformDir)
 $ErrorActionPreference='Stop'
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($TerraformDir)) {
+    $TerraformDir = Join-Path $scriptDir '../../infra/terraform/environments/dev'
+}
 $parameters=@{Region=$Region;AllRegions=$AllRegions}
 if($Profile){$parameters.Profile=$Profile}
-& (Join-Path $PSScriptRoot 'aws-inventory.ps1') @parameters
+& (Join-Path $scriptDir 'aws-inventory.ps1') @parameters
 $blocked=$false
 if($VpcId){
     $opts=@('--region',$Region,'--output','json','--no-cli-pager')

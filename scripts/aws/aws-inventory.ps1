@@ -26,9 +26,14 @@ Get-Command aws -ErrorAction Stop | Out-Null
 $interactive = -not $NonInteractive -and -not [Console]::IsInputRedirected
 if ($interactive -and -not $PSBoundParameters.ContainsKey('Profile')) {
     Write-Host 'Available AWS profiles:'
-    & aws configure list-profiles --no-cli-pager
-    if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not list configured profiles.' }
-    $Profile = (Read-Host 'AWS Profile [current/default]').Trim()
+    $profiles = @(& aws configure list-profiles --no-cli-pager)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not list configured profiles.' }
+    $profiles | ForEach-Object { Write-Host "  $_" }
+    do {
+        $Profile = (Read-Host 'AWS Profile name [current/default]').Trim()
+        if (-not $Profile -or $profiles -ccontains $Profile) { break }
+        Write-Warning 'Unknown profile. Enter a listed profile name, not an AWS account ID.'
+    } while ($true)
 }
 if ([string]::IsNullOrWhiteSpace($Region)) {
     if ($interactive) {
@@ -50,8 +55,16 @@ function Invoke-AwsJson {
     param([string[]]$Arguments,[string]$Location)
     $stderr = [IO.Path]::GetTempFileName()
     try {
-        $raw = & aws @Arguments --region $Location @common 2> $stderr
-        $code = $LASTEXITCODE
+        # Windows PowerShell 5.1 can treat native stderr as a PowerShell error.
+        # Let the process finish and inspect its actual exit code first.
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $raw = & aws @Arguments --region $Location @common 2> $stderr
+            $code = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
         if ($code -ne 0) {
             throw ("AWS CLI exit code " + $code + ": " + (Get-Content -LiteralPath $stderr -Raw))
         }
@@ -62,6 +75,7 @@ function Invoke-AwsJson {
 }
 # STS로 실제 호출 계정 및 IAM 주체를 확인한다.
 $identity=Invoke-AwsJson @('sts','get-caller-identity') $Region
+Write-Host "AWS Account: $($identity.Account) | Region: $Region | Profile: $Profile"
 # 실행별 고유 보고서 디렉터리를 생성한다.
 $folder=Join-Path $OutputRoot ((Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N').Substring(0,6))
 New-Item -ItemType Directory -Path $folder -Force | Out-Null

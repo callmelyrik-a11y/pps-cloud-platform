@@ -1,10 +1,17 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param([string]$Region='ap-northeast-2',[string]$Profile,[string]$TerraformDir=(Join-Path $PSScriptRoot '../../infra/terraform/environments/dev'),[switch]$AllRegions)
+param([string]$Region='ap-northeast-2',[string]$Profile,[string]$TerraformDir,[switch]$AllRegions)
 $ErrorActionPreference='Stop'
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($TerraformDir)) {
+    $TerraformDir = Join-Path $scriptDir '../../infra/terraform/environments/dev'
+}
 $parameters=@{Region=$Region;AllRegions=$AllRegions}
 if($Profile){$parameters.Profile=$Profile}
-& (Join-Path $PSScriptRoot 'aws-inventory.ps1') @parameters
+& (Join-Path $scriptDir 'aws-inventory.ps1') @parameters
 Get-Command terraform -ErrorAction Stop | Out-Null
 Push-Location $TerraformDir
 try {

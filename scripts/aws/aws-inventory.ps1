@@ -1,7 +1,14 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param([string]$Region='ap-northeast-2',[string]$Profile,[switch]$AllRegions,[string]$OutputRoot=(Join-Path $PSScriptRoot '../../aws-inventory-reports'))
+param([string]$Region='ap-northeast-2',[string]$Profile,[switch]$AllRegions,[string]$OutputRoot)
 $ErrorActionPreference='Stop'
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $OutputRoot = Join-Path $scriptDir '../../aws-inventory-reports'
+}
 Get-Command aws -ErrorAction Stop | Out-Null
 $common=@('--output','json','--no-cli-pager')
 if($Profile){$common+=@('--profile',$Profile)}

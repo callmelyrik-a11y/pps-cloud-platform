@@ -1,164 +1,233 @@
+
 #!/bin/bash
+
 set -euo pipefail
 
-exec > >(tee -a /var/log/g2b-bootstrap.log) 2>&1
+# ============================================================
+# Ubuntu 24.04 LTS
+# EKS Worker Node + eBPF Development Environment
+# ============================================================
 
-echo "[START] EC2 bootstrap"
+exec > >(tee -a /var/log/eks-bootstrap.log) 2>&1
 
-# -----------------------------------------
-# 1. Hostname and root password
-# -----------------------------------------
-hostnamectl --static set-hostname MyWeb
+export DEBIAN_FRONTEND=noninteractive
 
-usermod --password '${ec2_root_password_hash}' root
+echo "[START] EKS Worker Node Bootstrap"
 
-# -----------------------------------------
-# 2. Install packages
-# -----------------------------------------
-yum install -y \
-  httpd \
-  mariadb-server \
-  mariadb \
-  php \
-  php-mysqlnd \
-  php-gd \
-  wget \
-  unzip \
-  curl \
-  awscli
+# ============================================================
+# 1. OS 및 Kernel 정보 확인
+# ============================================================
 
-systemctl enable --now mariadb
-systemctl enable --now httpd
+echo "[INFO] Operating System"
+cat /etc/os-release
 
-php -m | grep -qi mysqli
+echo "[INFO] Kernel Version"
+uname -r
 
-echo "[OK] Packages installed"
+echo "[INFO] CPU Architecture"
+uname -m
 
-# -----------------------------------------
-# 3. Download bWAPP
-# -----------------------------------------
-wget -q -O /tmp/bWAPP.zip \
-  https://github.com/ncs10322/aws/raw/main/bWAPP.zip
+# ============================================================
+# 2. eBPF Kernel BTF 확인
+# ============================================================
 
-mkdir -p /tmp/bwapp-install
+echo "[CHECK] Kernel BTF"
 
-unzip -oq /tmp/bWAPP.zip -d /tmp/bwapp-install
+if [ -r /sys/kernel/btf/vmlinux ]; then
+    ls -lh /sys/kernel/btf/vmlinux
+    echo "[OK] Kernel BTF available"
+else
+    echo "[WARNING] Kernel BTF unavailable"
+fi
 
-cp -a /tmp/bwapp-install/bWAPP/. /var/www/html/
+# ============================================================
+# 3. Kernel BPF 설정 확인
+# ============================================================
 
-test -f /var/www/html/install.php
-test -f /var/www/html/admin/settings.php
+echo "[CHECK] Kernel BPF Configuration"
 
-echo "[OK] bWAPP files installed"
+KERNEL_CONFIG="/boot/config-$(uname -r)"
 
-# -----------------------------------------
-# 4. Create MariaDB user
-# Do not pre-create the bWAPP database.
-# -----------------------------------------
-mysql -u root <<'SQL'
-GRANT ALL PRIVILEGES ON bWAPP.*
-TO 'bwapp'@'localhost'
-IDENTIFIED BY 'bug';
+if [ -r "$KERNEL_CONFIG" ]; then
+    grep -E '^CONFIG_(BPF|BPF_SYSCALL|BPF_JIT|DEBUG_INFO_BTF|CGROUP_BPF|BPF_EVENTS|KPROBES|UPROBES)=' \
+        "$KERNEL_CONFIG" || true
+else
+    echo "[WARNING] Kernel configuration file unavailable"
+fi
 
-FLUSH PRIVILEGES;
-SQL
+# ============================================================
+# 4. BPF Filesystem 확인 및 마운트
+# ============================================================
 
-echo "[OK] MariaDB user created"
+echo "[CHECK] BPF Filesystem"
 
-# -----------------------------------------
-# 5. Configure bWAPP DB connection
-# -----------------------------------------
-sed -i \
-  's/\$db_username = "root"/\$db_username = "bwapp"/' \
-  /var/www/html/admin/settings.php
+mkdir -p /sys/fs/bpf
 
-# The original bWAPP setting uses password "bug".
-grep -q 'db_username = "bwapp"' \
-  /var/www/html/admin/settings.php
+if [ "$(findmnt -n -o FSTYPE --mountpoint /sys/fs/bpf || true)" = "bpf" ]; then
+    echo "[OK] BPF filesystem already mounted"
+else
+    if mountpoint -q /sys/fs/bpf; then
+        echo "[WARNING] Unexpected filesystem at /sys/fs/bpf"
+    elif mount -t bpf bpffs /sys/fs/bpf; then
+        echo "[OK] BPF filesystem mounted"
+    else
+        echo "[WARNING] BPF filesystem mount failed"
+    fi
+fi
 
-grep -q 'db_password = "bug"' \
-  /var/www/html/admin/settings.php
+findmnt -t bpf || true
 
-# -----------------------------------------
-# 6. Permissions
-# -----------------------------------------
-chown -R apache:apache /var/www/html
+# ============================================================
+# 5. Cgroup 버전 확인
+# ============================================================
 
-find /var/www/html -type d -exec chmod 755 {} \;
-find /var/www/html -type f -exec chmod 644 {} \;
+echo "[CHECK] Cgroup Version"
 
-for dir in passwords images documents; do
-  if [ -d "/var/www/html/$dir" ]; then
-    chmod 770 "/var/www/html/$dir"
-  fi
-done
+CGROUP_TYPE=$(stat -fc %T /sys/fs/cgroup)
 
-# -----------------------------------------
-# 7. Initialize bWAPP tables automatically
-# -----------------------------------------
-echo "[START] bWAPP database initialization"
+if [ "$CGROUP_TYPE" = "cgroup2fs" ]; then
+    echo "[OK] Cgroup v2 enabled"
+else
+    echo "[WARNING] Cgroup type: $CGROUP_TYPE"
+fi
 
-curl --fail --silent --show-error \
-  "http://127.0.0.1/install.php?install=yes" \
-  -o /tmp/bwapp-install-result.html
+# ============================================================
+# 6. EKS Bootstrap 파일 확인
+# ============================================================
 
-grep -q "bWAPP has been installed successfully" \
-  /tmp/bwapp-install-result.html
+if [ ! -x /etc/eks/bootstrap.sh ]; then
+    echo "[ERROR] EKS bootstrap script not found"
+    exit 1
+fi
 
-# Verify database and tables
-TABLE_COUNT=$(MYSQL_PWD=bug mysql \
-  -u bwapp \
-  -N -B \
-  -e "SELECT COUNT(*)
-      FROM information_schema.tables
-      WHERE table_schema = 'bWAPP';")
+# ============================================================
+# 7. EKS Worker Node 등록
+# ============================================================
 
-test "$TABLE_COUNT" -gt 0
+echo "[START] Registering EKS Worker Node"
 
-echo "[OK] bWAPP initialized: $TABLE_COUNT tables"
+/etc/eks/bootstrap.sh "${cluster_name}" \
+    --apiserver-endpoint "${cluster_endpoint}" \
+    --b64-cluster-ca "${cluster_ca}"
 
-# -----------------------------------------
-# 8. Set MariaDB root password
-# Lab environment only
-# -----------------------------------------
-mysql -u root -e \
-  "SET PASSWORD FOR 'root'@'localhost' =
-   PASSWORD('toor');"
+echo "[OK] EKS bootstrap command completed"
 
-echo "[OK] MariaDB root password configured"
+# ============================================================
+# 8. Container Runtime 및 Kubelet 확인
+# ============================================================
 
-# -----------------------------------------
-# 9. Download main.php from S3
-# -----------------------------------------
-aws s3 cp \
-  s3://g2b-konep-513329232596-ap-northeast-2-an/main.php \
-  /var/www/html/main.php
+echo "[CHECK] Container Runtime"
 
-test -s /var/www/html/main.php
+systemctl status containerd --no-pager || true
 
-# -----------------------------------------
-# 10. Apache default page
-# -----------------------------------------
-cat > /etc/httpd/conf.d/00-main-page.conf <<'EOF'
-DirectoryIndex main.php index.php index.html
-EOF
+echo "[CHECK] Kubelet"
 
-chown apache:apache /var/www/html/main.php
-chmod 644 /var/www/html/main.php
+systemctl status kubelet --no-pager || true
 
-php -l /var/www/html/main.php
-httpd -t
+# ============================================================
+# 9. eBPF 분석 도구 설치
+# ============================================================
 
-systemctl restart httpd
+echo "[START] Installing eBPF development tools"
 
-# -----------------------------------------
-# 11. Final verification
-# -----------------------------------------
-systemctl is-active --quiet httpd
-systemctl is-active --quiet mariadb
+if apt-get -o Acquire::Retries=3 update; then
 
-curl --fail --silent --show-error \
-  http://127.0.0.1/login.php \
-  -o /tmp/bwapp-login-check.html
+    PACKAGES=(
+        bpftool
+        bpftrace
+        clang
+        llvm
+        libbpf-dev
+        tcpdump
+        strace
+        build-essential
+        pkg-config
+        jq
+    )
 
-echo "[SUCCESS] EC2 bootstrap completed"
+    for PACKAGE in "$${PACKAGES[@]}"; do
+        echo "[INSTALL] $PACKAGE"
+
+        if apt-get -o Acquire::Retries=3 install -y "$PACKAGE"; then
+            echo "[OK] $PACKAGE installed"
+        else
+            echo "[WARNING] Failed to install $PACKAGE"
+        fi
+    done
+
+else
+    echo "[WARNING] APT repository update failed"
+fi
+
+# ============================================================
+# 10. bpftool 설치 확인 및 대체 패키지
+# ============================================================
+
+if ! command -v bpftool >/dev/null 2>&1; then
+    echo "[INFO] Trying kernel-specific Linux tools"
+
+    apt-get install -y \
+        linux-tools-common \
+        "linux-tools-$(uname -r)" || true
+fi
+
+# ============================================================
+# 11. eBPF Feature Probe
+# ============================================================
+
+REPORT_DIR="/var/log/ebpf"
+
+mkdir -p "$REPORT_DIR"
+chmod 700 "$REPORT_DIR"
+
+if command -v bpftool >/dev/null 2>&1; then
+
+    echo "[CHECK] eBPF Kernel Features"
+
+    bpftool feature probe kernel \
+        > "$REPORT_DIR/features.log" 2>&1 || true
+
+    echo "[CHECK] Loaded BPF Programs"
+
+    bpftool prog show \
+        > "$REPORT_DIR/programs.log" 2>&1 || true
+
+    echo "[CHECK] BPF Maps"
+
+    bpftool map show \
+        > "$REPORT_DIR/maps.log" 2>&1 || true
+
+    echo "[CHECK] Network BPF Attachments"
+
+    bpftool net show \
+        > "$REPORT_DIR/network.log" 2>&1 || true
+
+else
+    echo "[WARNING] bpftool unavailable"
+fi
+
+# ============================================================
+# 12. 설치 도구 버전 확인
+# ============================================================
+
+echo "[CHECK] Tool Versions"
+
+bpftool version || true
+
+bpftrace --version || true
+
+clang --version || true
+
+llvm-config --version || true
+
+tcpdump --version || true
+
+strace --version || true
+
+# ============================================================
+# 13. 초기화 결과
+# ============================================================
+
+echo "[INFO] eBPF Reports: $REPORT_DIR"
+
+echo "[SUCCESS] Node initialization script completed"

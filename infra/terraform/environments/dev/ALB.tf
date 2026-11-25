@@ -30,6 +30,31 @@ resource "aws_lb_target_group" "g2bkonepALBtargetgroup" {
   }
 }
 
+resource "aws_lb_target_group" "g2bkonepHTTPS" {
+  name        = "g2bkonepHTTPS-TG"
+  port        = 443
+  protocol    = "HTTPS"
+  target_type = "instance"
+
+  vpc_id = aws_vpc.g2bkonepVPC.id
+
+  health_check {
+    enabled             = true
+    protocol            = "HTTPS"
+    path                = "/health.html"
+    port                = "traffic-port"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+    timeout             = 5
+    matcher             = "200"
+  }
+
+  tags = {
+    Name = "g2bkonepHTTPS-TG"
+  }
+}
+
 # ============================================================
 # 2. Application Load Balancer
 # ============================================================

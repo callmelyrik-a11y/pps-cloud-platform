@@ -25,27 +25,59 @@ resource "aws_key_pair" "g2b_konep_keypair" {
 }
 
 # ============================================================
-# 2. Amazon Linux 2 AMI
+# 2. Ubuntu 24.04 LTS - EKS Optimized AMI 조회
 # ============================================================
 
-data "aws_ami" "LatestAmi" {
-  most_recent = true
-
-  filter {
-    name   = "owner-alias"
-    values = ["amazon"]
-  }
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-ebs"]
-  }
-
-  owners = ["amazon"]
+data "aws_ssm_parameter" "ubuntu_eks_ami" {
+  name = "/aws/service/canonical/ubuntu/eks/24.04/${var.cluster_version}/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 # ============================================================
-# 3. Branch VPC
+# 3. EKS Worker Node Launch Template
+# ============================================================
+
+resource "aws_launch_template" "eks_ubuntu" {
+  name_prefix = "g2b-konep-ubuntu-"
+
+  # 위에서 조회한 Ubuntu AMI ID 참조
+  image_id = data.aws_ssm_parameter.ubuntu_eks_ami.value
+
+  update_default_version = true
+
+  # EKS Cluster 연결 스크립트
+  user_data = base64encode(
+    templatefile("${path.module}/script.sh.tftpl", {
+      cluster_name = aws_eks_cluster.g2b_konep_eks.name
+
+      cluster_endpoint = aws_eks_cluster.g2b_konep_eks.endpoint
+
+      cluster_ca = aws_eks_cluster.g2b_konep_eks.certificate_authority[0].data
+    })
+  )
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      volume_size           = 40
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  # EC2 Instance Metadata 보안 설정
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
+  tags = local.g2b_konep_common_tags
+}
+
+# ============================================================
+# 4. Branch VPC
 # ============================================================
 
 resource "aws_vpc" "g2bkonepVPC" {
@@ -60,7 +92,7 @@ resource "aws_vpc" "g2bkonepVPC" {
 }
 
 # ============================================================
-# 4. Internet Gateway
+# 5. Internet Gateway
 # ============================================================
 
 resource "aws_internet_gateway" "g2bkonepIGW" {
@@ -72,7 +104,7 @@ resource "aws_internet_gateway" "g2bkonepIGW" {
 }
 
 # ============================================================
-# 5. Public Subnet A
+# 6. Public Subnet A
 # ============================================================
 
 resource "aws_subnet" "g2bkonepPublic1Subnet" {
@@ -87,7 +119,7 @@ resource "aws_subnet" "g2bkonepPublic1Subnet" {
 }
 
 # ============================================================
-# 6. Public Route Table A
+# 7. Public Route Table A
 # ============================================================
 
 resource "aws_route_table" "g2bkonepPublic1Routing" {
@@ -113,7 +145,7 @@ resource "aws_route_table_association" "g2bkonepPublic1RouteTableAssociation" {
 }
 
 # ============================================================
-# 7. NAT Gateway A
+# 8. NAT Gateway A
 # ============================================================
 
 resource "aws_eip" "g2bkonepNatGW1EIP" {
@@ -134,7 +166,7 @@ resource "aws_nat_gateway" "g2bkonepNatGW1" {
 }
 
 # ============================================================
-# 8. Private Subnet A
+# 9. Private Subnet A
 # ============================================================
 
 resource "aws_subnet" "g2bkonepPrivate1Subnet" {
@@ -149,7 +181,7 @@ resource "aws_subnet" "g2bkonepPrivate1Subnet" {
 }
 
 # ============================================================
-# 9. Private Route Table A
+# 10. Private Route Table A
 #
 # NAT / Peering routes are managed separately.
 # ============================================================
@@ -163,7 +195,7 @@ resource "aws_route_table" "g2bkonepPrivate1Routing" {
 }
 
 # ============================================================
-# 10. Private A -> NAT Gateway A
+# 11. Private A -> NAT Gateway A
 # ============================================================
 
 resource "aws_route" "g2b_konep_branch_nat_a" {
@@ -174,7 +206,7 @@ resource "aws_route" "g2b_konep_branch_nat_a" {
 }
 
 # ============================================================
-# 11. Private Route Table Association A
+# 12. Private Route Table Association A
 # ============================================================
 
 resource "aws_route_table_association" "g2bkonepPrivate1RouteTableAssociation" {
@@ -183,7 +215,7 @@ resource "aws_route_table_association" "g2bkonepPrivate1RouteTableAssociation" {
 }
 
 # ============================================================
-# 12. Public Subnet B
+# 13. Public Subnet B
 # ============================================================
 
 resource "aws_subnet" "g2bkonepPublic2Subnet" {
@@ -198,7 +230,7 @@ resource "aws_subnet" "g2bkonepPublic2Subnet" {
 }
 
 # ============================================================
-# 13. Public Route Table B
+# 14. Public Route Table B
 # ============================================================
 
 resource "aws_route_table" "g2bkonepPublic2Routing" {
@@ -224,7 +256,7 @@ resource "aws_route_table_association" "g2bkonepPublic2RouteTableAssociation" {
 }
 
 # ============================================================
-# 14. NAT Gateway B
+# 15. NAT Gateway B
 # ============================================================
 
 resource "aws_eip" "g2bkonepNatGW2EIP" {
@@ -245,7 +277,7 @@ resource "aws_nat_gateway" "g2bkonepNatGW2" {
 }
 
 # ============================================================
-# 15. Private Subnet B
+# 16. Private Subnet B
 # ============================================================
 
 resource "aws_subnet" "g2bkonepPrivate2Subnet" {
@@ -260,7 +292,7 @@ resource "aws_subnet" "g2bkonepPrivate2Subnet" {
 }
 
 # ============================================================
-# 16. Private Route Table B
+# 17. Private Route Table B
 #
 # NAT / Peering routes are managed separately.
 # ============================================================
@@ -274,7 +306,7 @@ resource "aws_route_table" "g2bkonepPrivate2Routing" {
 }
 
 # ============================================================
-# 17. Private B -> NAT Gateway B
+# 18. Private B -> NAT Gateway B
 # ============================================================
 
 resource "aws_route" "g2b_konep_branch_nat_b" {
@@ -285,7 +317,7 @@ resource "aws_route" "g2b_konep_branch_nat_b" {
 }
 
 # ============================================================
-# 18. Private Route Table Association B
+# 19. Private Route Table Association B
 # ============================================================
 
 resource "aws_route_table_association" "g2bkonepPrivate2RouteTableAssociation" {
@@ -294,7 +326,7 @@ resource "aws_route_table_association" "g2bkonepPrivate2RouteTableAssociation" {
 }
 
 # ============================================================
-# 19. Branch EC2 Security Group
+# 20. Branch EC2 Security Group
 # ============================================================
 
 resource "aws_security_group" "g2bkonepSecugroup" {
@@ -338,7 +370,7 @@ resource "aws_security_group" "g2bkonepSecugroup" {
     protocol  = "tcp"
 
     security_groups = [
-      aws_security_group.g2bkonepBastionSG.id
+
     ]
   }
 
@@ -352,7 +384,7 @@ resource "aws_security_group" "g2bkonepSecugroup" {
 }
 
 # ============================================================
-# 20. Existing VPC Peering Routes
+# 21. Existing VPC Peering Routes
 #
 # The following resources are defined in another .tf file.
 # Keep them unchanged; do not define them twice.

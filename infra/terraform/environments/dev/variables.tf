@@ -27,12 +27,28 @@ variable "vpc_cidr" {
 
 variable "availability_zones" {
   type    = list(string)
-  default = ["ap-northeast-2a", "ap-northeast-2c"]
+  default = ["ap-northeast-2a", "ap-northeast-2b"]
 
   validation {
     condition     = length(var.availability_zones) == 2
     error_message = "Choose two distinct AZs available in your AWS account."
   }
+}
+
+variable "ubuntu_version" {
+  description = "Ubuntu LTS version for EKS worker nodes"
+  type        = string
+  default     = "24.04"
+}
+
+variable "node_architecture" {
+  type    = string
+  default = "amd64"
+}
+
+variable "node_disk_size" {
+  type    = number
+  default = 40
 }
 
 variable "cluster_version" {
@@ -128,9 +144,48 @@ variable "hosted_zone_id" {
   default     = null
 }
 
-variable "ec2_root_password_hash" {
-  description = "Amazon Linux 2 root password hash for console login"
+# 보안 전용 노드 그룹 생성 여부
+variable "enable_security_node_group" {
+  type    = bool
+  default = false
+}
+
+variable "security_node_instance_type" {
+  type    = string
+  default = "t3.medium"
+}
+
+variable "security_node_min_size" {
+  type    = number
+  default = 1
+}
+
+variable "security_node_desired_size" {
+  type    = number
+  default = 1
+}
+
+variable "security_node_max_size" {
+  type    = number
+  default = 3
+}
+
+variable "security_log_retention_days" {
+  type    = number
+  default = 7
+}
+
+variable "cilium_chart_version" {
+  description = "Cilium Helm Chart version"
   type        = string
-  sensitive   = true
-  nullable    = false
+}
+
+variable "tetragon_chart_version" {
+  description = "Tetragon Helm Chart version"
+  type        = string
+}
+
+variable "argocd_chart_version" {
+  description = "Argo CD Helm Chart version"
+  type        = string
 }

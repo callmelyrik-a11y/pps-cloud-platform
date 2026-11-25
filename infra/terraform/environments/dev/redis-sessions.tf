@@ -18,7 +18,7 @@ resource "aws_vpc_security_group_ingress_rule" "bwapp_redis_from_app" {
 }
 
 resource "aws_elasticache_subnet_group" "bwapp_sessions" {
-  name       = "g2b-bwapp-session-subnets"
+  name = "g2b-bwapp-session-subnets"
   subnet_ids = [
     aws_subnet.g2bkonepPrivate1Subnet.id,
     aws_subnet.g2bkonepPrivate2Subnet.id

@@ -35,7 +35,7 @@ resource "aws_iam_role_policy_attachment" "g2b_konep_eks_cluster_policy" {
 
 resource "aws_cloudwatch_log_group" "g2b_konep_eks_control_plane" {
   name              = "/aws/eks/${local.cluster_name}/cluster"
-  retention_in_days = 7
+  retention_in_days = 5
 
   tags = merge(local.g2b_konep_common_tags, {
     Name = "${var.project}-${var.environment}-control-plane-logs"
@@ -55,6 +55,7 @@ resource "aws_eks_cluster" "g2b_konep_eks" {
     authentication_mode = "API_AND_CONFIG_MAP"
 
     bootstrap_cluster_creator_admin_permissions = true
+    bootstrap_self_managed_addons               = false
   }
 
   vpc_config {
@@ -116,7 +117,7 @@ resource "aws_iam_role_policy_attachment" "g2b_konep_node_ecr_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-# 학습 환경에서는 Node Role에 CNI 권한을 부여.
+# 학습 환경에서는 Node Role에 VPC CNI 권한을 부여.
 resource "aws_iam_role_policy_attachment" "g2b_konep_node_cni_policy" {
   role       = aws_iam_role.g2b_konep_eks_nodes_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
@@ -140,12 +141,16 @@ resource "aws_eks_node_group" "g2b_konep_general_node_group" {
 
   instance_types = [var.node_instance_type]
   capacity_type  = "ON_DEMAND"
-  disk_size      = 30
 
   scaling_config {
     desired_size = var.node_desired_size
     min_size     = var.node_min_size
     max_size     = var.node_max_size
+  }
+
+  launch_template {
+    id      = aws_launch_template.eks_ubuntu.id
+    version = tostring(aws_launch_template.eks_ubuntu.latest_version)
   }
 
   update_config {
@@ -176,6 +181,80 @@ resource "aws_eks_node_group" "g2b_konep_general_node_group" {
 }
 
 # ============================================================
+# Cilium - eBPF Networking
+# AWS VPC CNI Chaining 구성
+# ============================================================
+
+resource "helm_release" "cilium" {
+  name       = "cilium"
+  repository = "https://helm.cilium.io"
+  chart      = "cilium"
+  namespace  = "kube-system"
+
+  version = var.cilium_chart_version
+
+  values = [
+    yamlencode({
+      cni = {
+        chainingMode = "aws-cni"
+        exclusive    = false
+      }
+
+      routingMode          = "native"
+      enableIPv4Masquerade = false
+
+      # 초기 구축에서는 kube-proxy 유지
+      kubeProxyReplacement = false
+
+      hubble = {
+        enabled = true
+
+        relay = {
+          enabled = true
+        }
+
+        ui = {
+          enabled = true
+        }
+
+        metrics = {
+          enabled = [
+            "dns",
+            "drop",
+            "tcp",
+            "flow",
+            "icmp",
+            "port-distribution"
+          ]
+        }
+      }
+    })
+  ]
+
+  depends_on = [
+    aws_eks_node_group.g2b_konep_general_node_group,
+    aws_eks_addon.g2b_konep_vpc_cni
+  ]
+}
+
+# ============================================================
+# Tetragon - eBPF Runtime Security
+# ============================================================
+
+resource "helm_release" "tetragon" {
+  name       = "tetragon"
+  repository = "https://helm.cilium.io"
+  chart      = "tetragon"
+  namespace  = "kube-system"
+
+  version = var.tetragon_chart_version
+
+  depends_on = [
+    aws_eks_node_group.g2b_konep_general_node_group
+  ]
+}
+
+# ============================================================
 # 6. EKS Managed Add-ons
 # ============================================================
 
@@ -193,18 +272,65 @@ resource "aws_eks_addon" "g2b_konep_coredns" {
   tags = local.g2b_konep_common_tags
 }
 
-resource "aws_eks_addon" "g2b_konep_kube_proxy" {
-  cluster_name = aws_eks_cluster.g2b_konep_eks.name
-  addon_name   = "kube-proxy"
+# ============================================================
+# Argo CD - GitOps Continuous Delivery
+# ============================================================
 
-  resolve_conflicts_on_create = "OVERWRITE"
-  resolve_conflicts_on_update = "OVERWRITE"
+resource "helm_release" "argocd" {
 
-  depends_on = [
-    aws_eks_node_group.g2b_konep_general_node_group
+  name       = "argocd"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argo-cd"
+
+  namespace        = "argocd"
+  create_namespace = true
+
+  version = var.argocd_chart_version
+
+  wait            = true
+  timeout         = 900
+  atomic          = true
+  cleanup_on_fail = true
+
+  values = [
+    yamlencode({
+
+      server = {
+        replicas = 1
+
+        service = {
+          type = "ClusterIP"
+        }
+      }
+
+      controller = {
+        replicas = 1
+      }
+
+      repoServer = {
+        replicas = 1
+      }
+
+      applicationSet = {
+        replicas = 1
+      }
+
+      redis = {
+        enabled = true
+      }
+
+      redis-ha = {
+        enabled = false
+      }
+
+    })
   ]
 
-  tags = local.g2b_konep_common_tags
+  depends_on = [
+    aws_eks_node_group.g2b_konep_general_node_group,
+    aws_eks_addon.g2b_konep_coredns,
+    helm_release.cilium
+  ]
 }
 
 resource "aws_eks_addon" "g2b_konep_vpc_cni" {

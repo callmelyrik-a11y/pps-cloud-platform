@@ -33,3 +33,6 @@ coverage/
 infra/terraform/environments/dev/key/tf_keypair
 infra/terraform/environments/dev/key/*.ppk
 infra/terraform/environments/dev/key/*.pem
+
+# Local AWS inventory reports (sensitive infrastructure metadata)
+aws-inventory-reports/

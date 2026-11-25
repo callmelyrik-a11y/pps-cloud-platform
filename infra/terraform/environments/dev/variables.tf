@@ -178,14 +178,20 @@ variable "security_log_retention_days" {
 variable "cilium_chart_version" {
   description = "Cilium Helm Chart version"
   type        = string
+  default     = "1.20.5"
 }
 
 variable "tetragon_chart_version" {
   description = "Tetragon Helm Chart version"
   type        = string
+  default     = "1.8.0"
 }
 
 variable "argocd_chart_version" {
   description = "Argo CD Helm Chart version"
   type        = string
+  default     = "10.2.3"
 }
+
+
+
